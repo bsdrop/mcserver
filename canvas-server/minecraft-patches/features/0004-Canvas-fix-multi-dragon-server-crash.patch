@@ -1,0 +1,102 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 29 Jun 2026 21:39:07 +0000
+Subject: [PATCH] Canvas - fix multi-dragon server crash
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+With dozens of Ender Dragons:
+1. Crystal scan: each dragon scanned EndCrystals independently every ~10 ticks
+   → N dragons = N entity scans/10 ticks. Now share a single cached list
+   from EnderDragonFight, refreshed every 20 ticks.
+
+2. Fireball spam: all dragons fired simultaneously → N fireballs per strafe
+   cycle, each spawning an AreaEffectCloud on impact. Added a global
+   5-tick cooldown via EnderDragonFight.canvas$lastFireballTick so only
+   one fireball fires per cooldown window across all dragons combined.
+
+diff --git a/net/minecraft/world/entity/boss/enderdragon/EnderDragon.java b/net/minecraft/world/entity/boss/enderdragon/EnderDragon.java
+index ba45c99c1651067c076de419ac0119aa683d5035..c65cd48e543633fd527b32980919aa88826cf252 100644
+--- a/net/minecraft/world/entity/boss/enderdragon/EnderDragon.java
++++ b/net/minecraft/world/entity/boss/enderdragon/EnderDragon.java
+@@ -405,11 +405,16 @@ public class EnderDragon extends Mob implements Enemy {
+         }
+ 
+         if (this.random.nextInt(10) == 0) {
+-            List<EndCrystal> crystals = this.level().getEntitiesOfClass(EndCrystal.class, this.getBoundingBox().inflate(32.0));
++            // Canvas start - multi-dragon stability: share crystal list via fight cache instead of N separate entity scans
++            List<EndCrystal> crystals = this.dragonFight != null
++                ? this.dragonFight.canvas$getCachedCrystals()
++                : this.level().getEntitiesOfClass(EndCrystal.class, this.getBoundingBox().inflate(32.0));
++            // Canvas end - multi-dragon stability
+             EndCrystal nearest = null;
+             double distance = Double.MAX_VALUE;
+ 
+             for (EndCrystal crystal : crystals) {
++                if (crystal.isRemoved()) continue; // Canvas - stale cache guard
+                 double dist = crystal.distanceToSqr(this);
+                 if (dist < distance) {
+                     distance = dist;
+diff --git a/net/minecraft/world/entity/boss/enderdragon/phases/DragonStrafePlayerPhase.java b/net/minecraft/world/entity/boss/enderdragon/phases/DragonStrafePlayerPhase.java
+index b07a36b1b2f4d009b10b9df864f285f7be100709..43eadfc1b95bf96cedf4a27cf2a0fccc7f2cb531 100644
+--- a/net/minecraft/world/entity/boss/enderdragon/phases/DragonStrafePlayerPhase.java
++++ b/net/minecraft/world/entity/boss/enderdragon/phases/DragonStrafePlayerPhase.java
+@@ -8,6 +8,7 @@ import net.minecraft.world.entity.LivingEntity;
+ import net.minecraft.world.entity.boss.enderdragon.EnderDragon;
+ import net.minecraft.world.entity.projectile.hurtingprojectile.DragonFireball;
+ import net.minecraft.world.level.block.LevelEvent;
++import net.minecraft.world.level.dimension.end.EnderDragonFight;
+ import net.minecraft.world.level.pathfinder.Node;
+ import net.minecraft.world.level.pathfinder.Path;
+ import net.minecraft.world.phys.Vec3;
+@@ -60,6 +61,18 @@ public class DragonStrafePlayerPhase extends AbstractDragonPhaseInstance {
+                     float angleDegs = (float)(Math.acos(dot) * 180.0F / (float)Math.PI);
+                     angleDegs += 0.5F;
+                     if (this.fireballCharge >= 5 && angleDegs >= 0.0F && angleDegs < 10.0F) {
++                        // Canvas start - multi-dragon stability: global fireball rate limit
++                        // Without this, N dragons all fire simultaneously on the same tick → N fireballs
++                        // each spawning an AreaEffectCloud on impact, crashing the server with dozens of dragons.
++                        EnderDragonFight fight = this.dragon.getDragonFight();
++                        if (fight != null) {
++                            long now = level.getGameTime();
++                            if (now - fight.canvas$lastFireballTick < EnderDragonFight.CANVAS_DRAGON_FIREBALL_COOLDOWN_TICKS) {
++                                return; // wait for global cooldown slot, preserving fireballCharge
++                            }
++                            fight.canvas$lastFireballTick = now;
++                        }
++                        // Canvas end - multi-dragon stability
+                         double d = 1.0;
+                         Vec3 viewVector = this.dragon.getViewVector(1.0F);
+                         double startingX = this.dragon.head.getX() - viewVector.x * 1.0;
+diff --git a/net/minecraft/world/level/dimension/end/EnderDragonFight.java b/net/minecraft/world/level/dimension/end/EnderDragonFight.java
+index aa26a39b82d0dd5680aa0d2dbc032721df461256..1d0ba56690096c5173d227f18653fb775d045e1b 100644
+--- a/net/minecraft/world/level/dimension/end/EnderDragonFight.java
++++ b/net/minecraft/world/level/dimension/end/EnderDragonFight.java
+@@ -99,6 +99,26 @@ public class EnderDragonFight extends SavedData {
+     private boolean skipArenaLoadedCheck = false;
+     private @Nullable UUID dragonUUID;
+     private boolean needsStateScanning;
++    // Canvas start - multi-dragon stability: cache shared crystal list and rate-limit fireballs
++    // Without this, N dragons each scan for crystals independently ~N/10 times per tick,
++    // and all fire simultaneously causing AreaEffectCloud entity explosions.
++    private List<EndCrystal> canvas$cachedCrystals = List.of();
++    private int canvas$crystalCacheAge = 0;
++    public long canvas$lastFireballTick = Long.MIN_VALUE;
++    public static final int CANVAS_DRAGON_FIREBALL_COOLDOWN_TICKS = 5; // max 4 fireballs/sec globally
++
++    public List<EndCrystal> canvas$getCachedCrystals() {
++        if (++canvas$crystalCacheAge >= 20) {
++            canvas$crystalCacheAge = 0;
++            AABB searchArea = new AABB(
++                this.origin.getX() - 80, this.origin.getY() - 10, this.origin.getZ() - 80,
++                this.origin.getX() + 80, this.origin.getY() + 220, this.origin.getZ() + 80
++            );
++            this.canvas$cachedCrystals = this.level.getEntitiesOfClass(EndCrystal.class, searchArea);
++        }
++        return this.canvas$cachedCrystals;
++    }
++    // Canvas end - multi-dragon stability
+     public @Nullable BlockPos exitPortalLocation;
+     public @Nullable DragonRespawnStage respawnStage;
+     private int respawnTime;
