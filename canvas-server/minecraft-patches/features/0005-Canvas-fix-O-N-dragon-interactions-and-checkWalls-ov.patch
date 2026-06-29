@@ -1,5 +1,5 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: CanvasDev <dev@canvas.mc>
+From: CanvasDev <dev@canvasmc.io>
 Date: Mon, 29 Jun 2026 22:33:09 +0000
 Subject: [PATCH] =?UTF-8?q?Canvas=20-=20fix=20O(N=C2=B2)=20dragon=20intera?=
  =?UTF-8?q?ctions=20and=20checkWalls=20overhead?=
