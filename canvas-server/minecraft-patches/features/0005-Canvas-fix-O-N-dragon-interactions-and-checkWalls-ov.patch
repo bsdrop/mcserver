@@ -1,0 +1,75 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: CanvasDev <dev@canvas.mc>
+Date: Mon, 29 Jun 2026 22:33:09 +0000
+Subject: [PATCH] =?UTF-8?q?Canvas=20-=20fix=20O(N=C2=B2)=20dragon=20intera?=
+ =?UTF-8?q?ctions=20and=20checkWalls=20overhead?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- knockBack() and hurt(): skip EnderDragon/EnderDragonPart targets to
+  eliminate O(N²) wing/head interactions when many dragons share airspace
+- checkWalls(): skip block lookups in unloaded chunks to avoid triggering
+  expensive ServerChunkCache.getChunk (chunk gen/load) when dragon parts
+  extend beyond loaded territory
+- checkWalls(): throttle to every 2 ticks; block states change rarely and
+  1-tick latency in wall detection is imperceptible
+
+diff --git a/net/minecraft/world/entity/boss/enderdragon/EnderDragon.java b/net/minecraft/world/entity/boss/enderdragon/EnderDragon.java
+index c65cd48e543633fd527b32980919aa88826cf252..0ea23c7806b84ad1020d2ee79698718e77287882 100644
+--- a/net/minecraft/world/entity/boss/enderdragon/EnderDragon.java
++++ b/net/minecraft/world/entity/boss/enderdragon/EnderDragon.java
+@@ -356,9 +356,14 @@ public class EnderDragon extends Mob implements Enemy {
+                 }
+ 
+                 if (this.level() instanceof ServerLevel level) {
+-                    this.inWall = this.checkWalls(level, this.head.getBoundingBox())
+-                        | this.checkWalls(level, this.neck.getBoundingBox())
+-                        | this.checkWalls(level, this.body.getBoundingBox());
++                    // Canvas start - throttle checkWalls to every 2 ticks; block states rarely change
++                    // and dragon wall-detection latency of one extra tick is imperceptible
++                    if ((this.tickCount & 1) == 0) {
++                        this.inWall = this.checkWalls(level, this.head.getBoundingBox())
++                            | this.checkWalls(level, this.neck.getBoundingBox())
++                            | this.checkWalls(level, this.body.getBoundingBox());
++                    }
++                    // Canvas end
+                     if (this.dragonFight != null) {
+                         this.dragonFight.updateDragon(this);
+                     }
+@@ -431,6 +436,10 @@ public class EnderDragon extends Mob implements Enemy {
+         double zm = (this.body.getBoundingBox().minZ + this.body.getBoundingBox().maxZ) / 2.0;
+ 
+         for (Entity entity : entities) {
++            // Canvas start - multi-dragon O(N²) fix: skip dragon-dragon interactions
++            // Wings attacking other dragons creates O(N²) knockback/hurt calls when many dragons share airspace.
++            if (entity instanceof EnderDragon || entity instanceof EnderDragonPart) continue;
++            // Canvas end - multi-dragon O(N²) fix
+             if (entity instanceof LivingEntity livingTarget) {
+                 double xd = entity.getX() - xm;
+                 double zd = entity.getZ() - zm;
+@@ -447,6 +456,9 @@ public class EnderDragon extends Mob implements Enemy {
+ 
+     private void hurt(final ServerLevel level, final List<Entity> entities) {
+         for (Entity target : entities) {
++            // Canvas start - multi-dragon O(N²) fix: dragon head shouldn't damage other dragons
++            if (target instanceof EnderDragon || target instanceof EnderDragonPart) continue;
++            // Canvas end - multi-dragon O(N²) fix
+             if (target instanceof LivingEntity) {
+                 DamageSource damageSource = this.damageSources().mobAttack(this);
+                 target.hurtServer(level, damageSource, 10.0F);
+@@ -471,8 +483,12 @@ public class EnderDragon extends Mob implements Enemy {
+         List<org.bukkit.block.Block> destroyedBlocks = new java.util.ArrayList<>(); // Paper - Create a list to hold all the destroyed blocks
+ 
+         for (int x = x0; x <= x1; x++) {
+-            for (int y = y0; y <= y1; y++) {
+-                for (int z = z0; z <= z1; z++) {
++            for (int z = z0; z <= z1; z++) {
++                // Canvas start - skip unloaded chunks in checkWalls; avoids ServerChunkCache.getChunk
++                // triggering chunk gen/load when dragon parts extend into unloaded territory
++                if (level.getChunkIfLoaded(x >> 4, z >> 4) == null) continue;
++                // Canvas end
++                for (int y = y0; y <= y1; y++) {
+                     BlockPos blockPos = new BlockPos(x, y, z);
+                     BlockState state = level.getBlockState(blockPos);
+                     if (!state.isAir() && !state.is(BlockTags.DRAGON_TRANSPARENT)) {
