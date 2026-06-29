@@ -16,38 +16,38 @@
 _version: 31
 anticheat:
   anti-xray:
-    enabled: false
-    engine-mode: 1
+    enabled: true
+    engine-mode: 2
     hidden-blocks:
     - copper_ore
     - deepslate_copper_ore
-    - raw_copper_block
     - gold_ore
     - deepslate_gold_ore
     - iron_ore
     - deepslate_iron_ore
-    - raw_iron_block
     - coal_ore
     - deepslate_coal_ore
     - lapis_ore
     - deepslate_lapis_ore
-    - mossy_cobblestone
-    - obsidian
-    - chest
     - diamond_ore
     - deepslate_diamond_ore
     - redstone_ore
     - deepslate_redstone_ore
-    - clay
     - emerald_ore
     - deepslate_emerald_ore
-    - ender_chest
+    - ancient_debris
     lava-obscures: false
     max-block-height: 64
     replacement-blocks:
     - stone
-    - oak_planks
+    - granite
+    - andesite
+    - diorite
     - deepslate
+    - tuff
+    - calcite
+    - netherrack
+    - basalt
     update-radius: 2
     use-permission: false
 chunks:
@@ -181,29 +181,29 @@ entities:
     despawn-range-shape: ELLIPSOID
     despawn-ranges:
       ambient:
-        hard: 56
-        soft: 30
+        hard: 96
+        soft: 32
       axolotls:
-        hard: 56
-        soft: 30
+        hard: 96
+        soft: 32
       creature:
-        hard: 56
-        soft: 30
+        hard: 96
+        soft: 32
       misc:
-        hard: 56
-        soft: 30
+        hard: 96
+        soft: 32
       monster:
-        hard: 56
-        soft: 30
+        hard: 72
+        soft: 32
       underground_water_creature:
-        hard: 56
-        soft: 30
+        hard: 96
+        soft: 32
       water_ambient:
-        hard: 56
-        soft: 30
+        hard: 96
+        soft: 32
       water_creature:
-        hard: 56
-        soft: 30
+        hard: 96
+        soft: 32
     despawn-time:
       llama_spit: disabled
       snowball: disabled
