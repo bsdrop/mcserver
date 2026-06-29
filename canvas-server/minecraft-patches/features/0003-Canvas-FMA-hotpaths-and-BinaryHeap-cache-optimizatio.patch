@@ -1,0 +1,299 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 29 Jun 2026 21:28:45 +0000
+Subject: [PATCH] Canvas - FMA hotpaths and BinaryHeap cache optimization
+
+- ImprovedNoise: replace dot products + smoothstep + lerp chain with Math.fma()
+  Reduces 3mul+2add to 2FMA+1mul per dot product; ARM NEON FMA is single insn
+- SimplexNoise: FMA in dot() and getCornerNoise3D() for same reason
+- BinaryHeap: add parallel float[] costs array alongside Node[] heap
+  upHeap/downHeap comparisons now read contiguous float[] avoiding pointer
+  chasing into Node objects (~40 cycle penalty on Cortex-A72 per miss)
+
+diff --git a/net/minecraft/world/level/levelgen/synth/ImprovedNoise.java b/net/minecraft/world/level/levelgen/synth/ImprovedNoise.java
+index ce422db7961bfde1e0d17eb63691e4abd8e0bedb..55abd6da7bbf943558a69ec4086810438b1a4ad3 100644
+--- a/net/minecraft/world/level/levelgen/synth/ImprovedNoise.java
++++ b/net/minecraft/world/level/levelgen/synth/ImprovedNoise.java
+@@ -139,36 +139,41 @@ public final class ImprovedNoise {
+         final double var60 = xr - 1.0;
+         final double var61 = yr - 1.0;
+         final double var62 = zr - 1.0;
+-        final double var87 = FLAT_SIMPLEX_GRAD[(var20) | 0] * xr + FLAT_SIMPLEX_GRAD[(var20) | 1] * yr + FLAT_SIMPLEX_GRAD[(var20) | 2] * zr;
+-        final double var88 = FLAT_SIMPLEX_GRAD[(var21) | 0] * var60 + FLAT_SIMPLEX_GRAD[(var21) | 1] * yr + FLAT_SIMPLEX_GRAD[(var21) | 2] * zr;
+-        final double var89 = FLAT_SIMPLEX_GRAD[(var22) | 0] * xr + FLAT_SIMPLEX_GRAD[(var22) | 1] * var61 + FLAT_SIMPLEX_GRAD[(var22) | 2] * zr;
+-        final double var90 = FLAT_SIMPLEX_GRAD[(var23) | 0] * var60 + FLAT_SIMPLEX_GRAD[(var23) | 1] * var61 + FLAT_SIMPLEX_GRAD[(var23) | 2] * zr;
+-        final double var91 = FLAT_SIMPLEX_GRAD[(var24) | 0] * xr + FLAT_SIMPLEX_GRAD[(var24) | 1] * yr + FLAT_SIMPLEX_GRAD[(var24) | 2] * var62;
+-        final double var92 = FLAT_SIMPLEX_GRAD[(var25) | 0] * var60 + FLAT_SIMPLEX_GRAD[(var25) | 1] * yr + FLAT_SIMPLEX_GRAD[(var25) | 2] * var62;
+-        final double var93 = FLAT_SIMPLEX_GRAD[(var26) | 0] * xr + FLAT_SIMPLEX_GRAD[(var26) | 1] * var61 + FLAT_SIMPLEX_GRAD[(var26) | 2] * var62;
+-        final double var94 = FLAT_SIMPLEX_GRAD[(var27) | 0] * var60 + FLAT_SIMPLEX_GRAD[(var27) | 1] * var61 + FLAT_SIMPLEX_GRAD[(var27) | 2] * var62;
+-
+-        final double var95 = xr * 6.0 - 15.0;
+-        final double var96 = yrOriginal * 6.0 - 15.0;
+-        final double var97 = zr * 6.0 - 15.0;
+-        final double var98 = xr * var95 + 10.0;
+-        final double var99 = yrOriginal * var96 + 10.0;
+-        final double var100 = zr * var97 + 10.0;
+-        final double var101 = xr * xr * xr * var98;
+-        final double var102 = yrOriginal * yrOriginal * yrOriginal * var99;
+-        final double var103 = zr * zr * zr * var100;
+-
+-        final double var113 = var87 + var101 * (var88 - var87);
+-        final double var114 = var93 + var101 * (var94 - var93);
+-        final double var115 = var91 + var101 * (var92 - var91);
+-        final double var116 = var89 + var101 * (var90 - var89);
+-        final double var117 = var114 - var115;
+-        final double var118 = var102 * (var116 - var113);
+-        final double var119 = var102 * var117;
+-        final double var120 = var113 + var118;
+-        final double var121 = var115 + var119;
+-        return var120 + (var103 * (var121 - var120));
+-        // Canvas end - inline math & small optimization: remove frequent type conversions and redundant ops
++        // Canvas start - FMA: replace a*b+c patterns with fused multiply-add (1 rounding error vs 2, 1 insn on ARM NEON/x86 FMA)
++        // Dot products: g[0]*x + g[1]*y + g[2]*z → fma(g[0],x, fma(g[1],y, g[2]*z))
++        final double var87 = Math.fma(FLAT_SIMPLEX_GRAD[var20],     xr,   Math.fma(FLAT_SIMPLEX_GRAD[var20 | 1], yr,   FLAT_SIMPLEX_GRAD[var20 | 2] * zr));
++        final double var88 = Math.fma(FLAT_SIMPLEX_GRAD[var21],     var60, Math.fma(FLAT_SIMPLEX_GRAD[var21 | 1], yr,   FLAT_SIMPLEX_GRAD[var21 | 2] * zr));
++        final double var89 = Math.fma(FLAT_SIMPLEX_GRAD[var22],     xr,   Math.fma(FLAT_SIMPLEX_GRAD[var22 | 1], var61, FLAT_SIMPLEX_GRAD[var22 | 2] * zr));
++        final double var90 = Math.fma(FLAT_SIMPLEX_GRAD[var23],     var60, Math.fma(FLAT_SIMPLEX_GRAD[var23 | 1], var61, FLAT_SIMPLEX_GRAD[var23 | 2] * zr));
++        final double var91 = Math.fma(FLAT_SIMPLEX_GRAD[var24],     xr,   Math.fma(FLAT_SIMPLEX_GRAD[var24 | 1], yr,   FLAT_SIMPLEX_GRAD[var24 | 2] * var62));
++        final double var92 = Math.fma(FLAT_SIMPLEX_GRAD[var25],     var60, Math.fma(FLAT_SIMPLEX_GRAD[var25 | 1], yr,   FLAT_SIMPLEX_GRAD[var25 | 2] * var62));
++        final double var93 = Math.fma(FLAT_SIMPLEX_GRAD[var26],     xr,   Math.fma(FLAT_SIMPLEX_GRAD[var26 | 1], var61, FLAT_SIMPLEX_GRAD[var26 | 2] * var62));
++        final double var94 = Math.fma(FLAT_SIMPLEX_GRAD[var27],     var60, Math.fma(FLAT_SIMPLEX_GRAD[var27 | 1], var61, FLAT_SIMPLEX_GRAD[var27 | 2] * var62));
++
++        // Smoothstep: t^3*(6t^2 - 15t + 10) = t^3*((6t - 15)t + 10)
++        // FMA chain reduces 3 mul+2 add → 2 FMA per axis
++        final double var95  = Math.fma(xr,        6.0, -15.0);
++        final double var96  = Math.fma(yrOriginal, 6.0, -15.0);
++        final double var97  = Math.fma(zr,         6.0, -15.0);
++        final double var98  = Math.fma(xr,        var95,  10.0);
++        final double var99  = Math.fma(yrOriginal, var96,  10.0);
++        final double var100 = Math.fma(zr,         var97,  10.0);
++        final double xr2    = xr * xr;
++        final double yr2    = yrOriginal * yrOriginal;
++        final double zr2    = zr * zr;
++        final double var101 = xr2 * xr * var98;
++        final double var102 = yr2 * yrOriginal * var99;
++        final double var103 = zr2 * zr * var100;
++
++        // Trilinear lerp chain: lerp(t, a, b) = fma(t, b-a, a)
++        final double var113 = Math.fma(var101, var88 - var87, var87);
++        final double var114 = Math.fma(var101, var94 - var93, var93);
++        final double var115 = Math.fma(var101, var92 - var91, var91);
++        final double var116 = Math.fma(var101, var90 - var89, var89);
++        final double var120 = Math.fma(var102, var116 - var113, var113);
++        final double var121 = Math.fma(var102, var114 - var115, var115);
++        return Math.fma(var103, var121 - var120, var120);
++        // Canvas end - FMA
+     }
+ 
+     private double sampleWithDerivative(final int x, final int y, final int z, final double xr, final double yr, final double zr, final double[] derivativeOut) {
+diff --git a/net/minecraft/world/level/levelgen/synth/SimplexNoise.java b/net/minecraft/world/level/levelgen/synth/SimplexNoise.java
+index 0ad59c736d2f38bd28608c5ab807425a1609e758..eb1e38e3c21547be502b8f1b097c7e6aea81f2a4 100644
+--- a/net/minecraft/world/level/levelgen/synth/SimplexNoise.java
++++ b/net/minecraft/world/level/levelgen/synth/SimplexNoise.java
+@@ -53,11 +53,13 @@ public class SimplexNoise {
+     }
+ 
+     protected static double dot(final int[] g, final double x, final double y, final double z) {
+-        return g[0] * x + g[1] * y + g[2] * z;
++        // Canvas - FMA: fma(g0,x, fma(g1,y, g2*z)) → 2 FMA + 1 mul vs 3 mul + 2 add
++        return Math.fma(g[0], x, Math.fma(g[1], y, g[2] * z));
+     }
+ 
+     private double getCornerNoise3D(final int index, final double x, final double y, final double z, final double base) {
+-        double t0 = base - x * x - y * y - z * z;
++        // Canvas - FMA: base - fma(x,x, fma(y,y, z*z))
++        double t0 = base - Math.fma(x, x, Math.fma(y, y, z * z));
+         double n0;
+         if (t0 < 0.0) {
+             n0 = 0.0;
+diff --git a/net/minecraft/world/level/pathfinder/BinaryHeap.java b/net/minecraft/world/level/pathfinder/BinaryHeap.java
+index 2cb6d1322e44a683e790f9ff4d989aea3b9472b1..e9ee55c5da80bd1a7c2837010435dba852c33678 100644
+--- a/net/minecraft/world/level/pathfinder/BinaryHeap.java
++++ b/net/minecraft/world/level/pathfinder/BinaryHeap.java
+@@ -4,6 +4,11 @@ import java.util.Arrays;
+ 
+ public class BinaryHeap {
+     private Node[] heap = new Node[128];
++    // Canvas - parallel float array: heap comparisons read costs[] directly without
++    // dereferencing Node pointers, eliminating cache misses in the tight heap loops.
++    // On Cortex-A72 (RPi 4), a pointer chase costs ~40 cycles; this makes upHeap/downHeap
++    // work only on a contiguous float[] until the swap is decided.
++    private float[] costs = new float[128];
+     private int size;
+ 
+     public Node insert(final Node node) {
+@@ -12,12 +17,17 @@ public class BinaryHeap {
+         }
+ 
+         if (this.size == this.heap.length) {
+-            Node[] newHeap = new Node[this.size << 1];
++            final int newLen = this.size << 1;
++            final Node[] newHeap = new Node[newLen];
++            final float[] newCosts = new float[newLen];
+             System.arraycopy(this.heap, 0, newHeap, 0, this.size);
++            System.arraycopy(this.costs, 0, newCosts, 0, this.size);
+             this.heap = newHeap;
++            this.costs = newCosts;
+         }
+ 
+         this.heap[this.size] = node;
++        this.costs[this.size] = node.f;
+         node.heapIdx = this.size;
+         this.upHeap(this.size++);
+         return node;
+@@ -32,34 +42,43 @@ public class BinaryHeap {
+     }
+ 
+     public Node pop() {
+-        Node popped = this.heap[0];
+-        this.heap[0] = this.heap[--this.size];
+-        this.heap[this.size] = null;
+-        if (this.size > 0) {
++        final Node popped = this.heap[0];
++        final int last = --this.size;
++        if (last > 0) {
++            final Node moved = this.heap[last];
++            this.heap[0] = moved;
++            this.costs[0] = this.costs[last];
++            moved.heapIdx = 0;
+             this.downHeap(0);
+         }
+-
++        this.heap[last] = null;
+         popped.heapIdx = -1;
+         return popped;
+     }
+ 
+     public void remove(final Node node) {
+-        this.heap[node.heapIdx] = this.heap[--this.size];
+-        this.heap[this.size] = null;
+-        if (this.size > node.heapIdx) {
+-            if (this.heap[node.heapIdx].f < node.f) {
+-                this.upHeap(node.heapIdx);
++        final int idx = node.heapIdx;
++        final float removedCost = this.costs[idx];
++        final int last = --this.size;
++        if (last != idx) {
++            final Node moved = this.heap[last];
++            this.heap[idx] = moved;
++            this.costs[idx] = this.costs[last];
++            moved.heapIdx = idx;
++            if (this.costs[idx] < removedCost) {
++                this.upHeap(idx);
+             } else {
+-                this.downHeap(node.heapIdx);
++                this.downHeap(idx);
+             }
+         }
+-
++        this.heap[last] = null;
+         node.heapIdx = -1;
+     }
+ 
+     public void changeCost(final Node node, final float newCost) {
+-        float oldCost = node.f;
++        final float oldCost = node.f;
+         node.f = newCost;
++        this.costs[node.heapIdx] = newCost;
+         if (newCost < oldCost) {
+             this.upHeap(node.heapIdx);
+         } else {
+@@ -72,68 +91,57 @@ public class BinaryHeap {
+     }
+ 
+     private void upHeap(int idx) {
+-        Node node = this.heap[idx];
+-        float cost = node.f;
++        final Node node = this.heap[idx];
++        final float cost = this.costs[idx];
+ 
+         while (idx > 0) {
+-            int parentIdx = idx - 1 >> 1;
+-            Node parent = this.heap[parentIdx];
+-            if (!(cost < parent.f)) {
+-                break;
+-            }
+-
++            final int parentIdx = idx - 1 >> 1;
++            if (!(cost < this.costs[parentIdx])) break;
++            final Node parent = this.heap[parentIdx];
+             this.heap[idx] = parent;
++            this.costs[idx] = this.costs[parentIdx];
+             parent.heapIdx = idx;
+             idx = parentIdx;
+         }
+ 
+         this.heap[idx] = node;
++        this.costs[idx] = cost;
+         node.heapIdx = idx;
+     }
+ 
+     private void downHeap(int idx) {
+-        Node node = this.heap[idx];
+-        float cost = node.f;
++        final Node node = this.heap[idx];
++        final float cost = this.costs[idx];
+ 
+         while (true) {
+-            int leftIdx = 1 + (idx << 1);
+-            int rightIdx = leftIdx + 1;
+-            if (leftIdx >= this.size) {
+-                break;
+-            }
+-
+-            Node leftNode = this.heap[leftIdx];
+-            float leftCost = leftNode.f;
+-            Node rightNode;
+-            float rightCost;
+-            if (rightIdx >= this.size) {
+-                rightNode = null;
+-                rightCost = Float.POSITIVE_INFINITY;
++            final int leftIdx = 1 + (idx << 1);
++            if (leftIdx >= this.size) break;
++
++            final float leftCost = this.costs[leftIdx];
++            final int rightIdx = leftIdx + 1;
++            final float rightCost = rightIdx < this.size ? this.costs[rightIdx] : Float.POSITIVE_INFINITY;
++
++            final int smallerIdx;
++            final float smallerCost;
++            if (leftCost <= rightCost) {
++                smallerIdx = leftIdx;
++                smallerCost = leftCost;
+             } else {
+-                rightNode = this.heap[rightIdx];
+-                rightCost = rightNode.f;
++                smallerIdx = rightIdx;
++                smallerCost = rightCost;
+             }
+ 
+-            if (leftCost < rightCost) {
+-                if (!(leftCost < cost)) {
+-                    break;
+-                }
+-
+-                this.heap[idx] = leftNode;
+-                leftNode.heapIdx = idx;
+-                idx = leftIdx;
+-            } else {
+-                if (!(rightCost < cost)) {
+-                    break;
+-                }
++            if (!(smallerCost < cost)) break;
+ 
+-                this.heap[idx] = rightNode;
+-                rightNode.heapIdx = idx;
+-                idx = rightIdx;
+-            }
++            final Node smaller = this.heap[smallerIdx];
++            this.heap[idx] = smaller;
++            this.costs[idx] = smallerCost;
++            smaller.heapIdx = idx;
++            idx = smallerIdx;
+         }
+ 
+         this.heap[idx] = node;
++        this.costs[idx] = cost;
+         node.heapIdx = idx;
+     }
+ 
