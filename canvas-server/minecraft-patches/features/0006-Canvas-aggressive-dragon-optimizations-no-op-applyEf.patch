@@ -1,0 +1,160 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 29 Jun 2026 23:04:49 +0000
+Subject: [PATCH] Canvas - aggressive dragon optimizations: no-op
+ applyEffectsFromBlocks, skip FLAP gameEvent, cache oldPos, throttle wing
+ scan, minimal EnderDragonPart.tick
+
+
+diff --git a/net/minecraft/world/entity/boss/enderdragon/EnderDragon.java b/net/minecraft/world/entity/boss/enderdragon/EnderDragon.java
+index 0ea23c7806b84ad1020d2ee79698718e77287882..8e6c04378da2d320eb184f9f01848ec8855398cf 100644
+--- a/net/minecraft/world/entity/boss/enderdragon/EnderDragon.java
++++ b/net/minecraft/world/entity/boss/enderdragon/EnderDragon.java
+@@ -92,6 +92,11 @@ public class EnderDragon extends Mob implements Enemy {
+     private final net.minecraft.world.level.Explosion explosionSource; // Paper - reusable source for CraftTNTPrimed.getSource()
+     private @Nullable BlockPos podium;
+     // Paper end
++    // Canvas start - preallocated part old-position arrays; avoids 8 Vec3 allocations per tick
++    private double[] canvas$partOldX;
++    private double[] canvas$partOldY;
++    private double[] canvas$partOldZ;
++    // Canvas end
+ 
+     public EnderDragon(final EntityType<? extends EnderDragon> type, final Level level) {
+         super(EntityTypes.ENDER_DRAGON, level);
+@@ -104,6 +109,11 @@ public class EnderDragon extends Mob implements Enemy {
+         this.wing1 = new EnderDragonPart(this, "wing", 4.0F, 2.0F);
+         this.wing2 = new EnderDragonPart(this, "wing", 4.0F, 2.0F);
+         this.subEntities = new EnderDragonPart[]{this.head, this.neck, this.body, this.tail1, this.tail2, this.tail3, this.wing1, this.wing2};
++        // Canvas start - initialize oldPos cache arrays
++        this.canvas$partOldX = new double[this.subEntities.length];
++        this.canvas$partOldY = new double[this.subEntities.length];
++        this.canvas$partOldZ = new double[this.subEntities.length];
++        // Canvas end
+         this.setHealth(this.getMaxHealth());
+         this.noPhysics = true;
+         this.phaseManager = new EnderDragonPhaseManager(this);
+@@ -163,6 +173,21 @@ public class EnderDragon extends Mob implements Enemy {
+         }
+     }
+ 
++    // Canvas start - eliminate overhead that is always a no-op in The End
++    @Override
++    protected Entity.MovementEmission getMovementEmission() {
++        // Returning SOUNDS skips FLAP/STEP/SWIM GameEvent dispatches.
++        // Each GameEvent fires 3 Bukkit event dispatches; sculk sensors don't exist in The End.
++        return Entity.MovementEmission.SOUNDS;
++    }
++
++    @Override
++    public void applyEffectsFromBlocks() {
++        // Ender Dragons don't touch powder snow, honey, or other block effects in The End.
++        // Parent's triple-nested getBlockState scan (Entity.applyEffectsFromBlocks) is pure overhead.
++    }
++    // Canvas end
++
+     @Override
+     protected void defineSynchedData(final SynchedEntityData.Builder entityData) {
+         super.defineSynchedData(entityData);
+@@ -277,11 +302,13 @@ public class EnderDragon extends Mob implements Enemy {
+                 }
+ 
+                 this.yBodyRot = this.getYRot();
+-                Vec3[] oldPos = new Vec3[this.subEntities.length];
+-
++                // Canvas start - use preallocated double[] fields to avoid 8 Vec3 allocations per tick
+                 for (int i = 0; i < this.subEntities.length; i++) {
+-                    oldPos[i] = new Vec3(this.subEntities[i].getX(), this.subEntities[i].getY(), this.subEntities[i].getZ());
++                    this.canvas$partOldX[i] = this.subEntities[i].getX();
++                    this.canvas$partOldY[i] = this.subEntities[i].getY();
++                    this.canvas$partOldZ[i] = this.subEntities[i].getZ();
+                 }
++                // Canvas end
+ 
+                 float tilt = (float)(this.flightHistory.get(5).y() - this.flightHistory.get(10).y()) * 10.0F * Mth.DEG_TO_RAD;
+                 float ccTilt = Mth.cos(tilt);
+@@ -292,8 +319,9 @@ public class EnderDragon extends Mob implements Enemy {
+                 this.tickPart(this.body, ss1 * 0.5F, 0.0, -cc1 * 0.5F);
+                 this.tickPart(this.wing1, cc1 * 4.5F, 2.0, ss1 * 4.5F);
+                 this.tickPart(this.wing2, cc1 * -4.5F, 2.0, ss1 * -4.5F);
+-                if (this.level() instanceof ServerLevel serverLevel && this.hurtTime == 0) {
+-                    // Canvas start - region threading
++                // Canvas start - throttle wing/head entity scan to every 2 ticks; plugin compat not required
++                if (this.level() instanceof ServerLevel serverLevel && this.hurtTime == 0 && (this.tickCount & 1) == 0) {
++                    // Canvas - region threading
+                     final AABB wing1AABB = this.wing1.getBoundingBox()
+                         .inflate(4.0, 2.0, 4.0)
+                         .move(0.0, -2.0, 0.0);
+@@ -303,27 +331,25 @@ public class EnderDragon extends Mob implements Enemy {
+                     final net.minecraft.world.phys.AABB neckAABB = this.neck.getBoundingBox().inflate(1.0);
+                     final net.minecraft.world.phys.AABB headAABB = this.head.getBoundingBox().inflate(1.0);
+                     if (ca.spottedleaf.moonrise.common.util.TickThread.isTickThreadFor(serverLevel, wing1AABB)) this.knockBack(
+-                    // Canvas end - region threading
+                         serverLevel,
+                         serverLevel.getEntities(
+-                            this, wing1AABB, EntitySelector.NO_CREATIVE_OR_SPECTATOR // Canvas - region threading
++                            this, wing1AABB, EntitySelector.NO_CREATIVE_OR_SPECTATOR
+                         )
+                     );
+-                    if (ca.spottedleaf.moonrise.common.util.TickThread.isTickThreadFor(serverLevel, wing2AABB)) this.knockBack( // Canvas - region threading
++                    if (ca.spottedleaf.moonrise.common.util.TickThread.isTickThreadFor(serverLevel, wing2AABB)) this.knockBack(
+                         serverLevel,
+                         serverLevel.getEntities(
+-                            this, wing2AABB, EntitySelector.NO_CREATIVE_OR_SPECTATOR // Canvas - region threading
++                            this, wing2AABB, EntitySelector.NO_CREATIVE_OR_SPECTATOR
+                         )
+                     );
+-                    // Canvas start - region threading
+                     if (ca.spottedleaf.moonrise.common.util.TickThread.isTickThreadFor(serverLevel, headAABB)) {
+                         this.hurt(serverLevel, serverLevel.getEntities(this, headAABB, EntitySelector.NO_CREATIVE_OR_SPECTATOR));
+                     }
+                     if (ca.spottedleaf.moonrise.common.util.TickThread.isTickThreadFor(serverLevel, neckAABB)) {
+                         this.hurt(serverLevel, serverLevel.getEntities(this, neckAABB, EntitySelector.NO_CREATIVE_OR_SPECTATOR));
+                     }
+-                    // Canvas end - region threading
+                 }
++                // Canvas end
+ 
+                 float ss2 = Mth.sin(this.getYRot() * Mth.DEG_TO_RAD - this.yRotA * 0.01F);
+                 float cc2 = Mth.cos(this.getYRot() * Mth.DEG_TO_RAD - this.yRotA * 0.01F);
+@@ -369,14 +395,16 @@ public class EnderDragon extends Mob implements Enemy {
+                     }
+                 }
+ 
++                // Canvas start - use cached double[] arrays (no Vec3 allocation)
+                 for (int i = 0; i < this.subEntities.length; i++) {
+-                    this.subEntities[i].xo = oldPos[i].x;
+-                    this.subEntities[i].yo = oldPos[i].y;
+-                    this.subEntities[i].zo = oldPos[i].z;
+-                    this.subEntities[i].xOld = oldPos[i].x;
+-                    this.subEntities[i].yOld = oldPos[i].y;
+-                    this.subEntities[i].zOld = oldPos[i].z;
++                    this.subEntities[i].xo = this.canvas$partOldX[i];
++                    this.subEntities[i].yo = this.canvas$partOldY[i];
++                    this.subEntities[i].zo = this.canvas$partOldZ[i];
++                    this.subEntities[i].xOld = this.canvas$partOldX[i];
++                    this.subEntities[i].yOld = this.canvas$partOldY[i];
++                    this.subEntities[i].zOld = this.canvas$partOldZ[i];
+                 }
++                // Canvas end
+             }
+         }
+     }
+diff --git a/net/minecraft/world/entity/boss/enderdragon/EnderDragonPart.java b/net/minecraft/world/entity/boss/enderdragon/EnderDragonPart.java
+index a8e3df21c27b9c86f9f03ea436ef4099a0805b71..8524b7a5f36438d9998c268d9ab8d6908bb55ac4 100644
+--- a/net/minecraft/world/entity/boss/enderdragon/EnderDragonPart.java
++++ b/net/minecraft/world/entity/boss/enderdragon/EnderDragonPart.java
+@@ -73,4 +73,13 @@ public class EnderDragonPart extends Entity {
+     public boolean shouldBeSaved() {
+         return false;
+     }
++
++    // Canvas start - minimal tick; position is set by parent dragon's tickPart() each tick.
++    // Skipping Entity.baseTick() eliminates fire/fluid/portal/void/freeze overhead
++    // that is always a no-op for a collision part at y=80 in The End.
++    @Override
++    public void tick() {
++        ++this.tickCount;
++    }
++    // Canvas end
+ }

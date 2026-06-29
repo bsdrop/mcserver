@@ -403,7 +403,8 @@ public class GlobalConfiguration extends Part {
         }
 
         public int threadPriority = Thread.NORM_PRIORITY;
-        public FluidPostProcessingMode fluidPostProcessingAlgorithm = FluidPostProcessingMode.VANILLA;
+        // Canvas aggressive defaults: FILTERED reduces chunk-gen stutter significantly
+        public FluidPostProcessingMode fluidPostProcessingAlgorithm = FluidPostProcessingMode.FILTERED;
 
         public enum FluidPostProcessingMode {
             VANILLA,
@@ -411,11 +412,12 @@ public class GlobalConfiguration extends Part {
             FILTERED
         }
 
-        public boolean makeFluidPostProcessScheduledTick = false;
-        public boolean optimizeAquifer = false;
-        public boolean useEndBiomeCache = false;
-        public int endBiomeCacheSize = 1024;
-        public boolean optimizeBeardifier = false;
+        // Canvas aggressive defaults: all chunk-gen optimizations on
+        public boolean makeFluidPostProcessScheduledTick = true;
+        public boolean optimizeAquifer = true;
+        public boolean useEndBiomeCache = true;
+        public int endBiomeCacheSize = 4096;
+        public boolean optimizeBeardifier = true;
 
         public StructureGen structureOptimizations = new StructureGen();
         public static class StructureGen extends Part {
@@ -435,8 +437,9 @@ public class GlobalConfiguration extends Part {
                 );
             }
 
-            public boolean deduplicateShuffledTemplatePoolElementList = false;
-            public boolean enable = false;
+            // Canvas aggressive defaults: structure layout optimizer on
+            public boolean deduplicateShuffledTemplatePoolElementList = true;
+            public boolean enable = true;
         }
     }
 
@@ -519,11 +522,12 @@ public class GlobalConfiguration extends Part {
                 );
         }
 
-        public boolean filterVelocityPacket = false;
-        public boolean filterMovePackets = false;
-        public boolean alternativePlayerListTick = false;
+        // Canvas aggressive defaults: filter redundant packets and async login
+        public boolean filterVelocityPacket = true;
+        public boolean filterMovePackets = true;
+        public boolean alternativePlayerListTick = true;
         public int playerInfoSendInterval = 600;
-        public boolean asyncProtocolSwitch = false;
+        public boolean asyncProtocolSwitch = true;
         public int maximumPacketBytes = 8388608;
         public boolean disablePaperPacketOverflowContainerFix = false;
         public String packetTooLargeDisconnectReason = "Clientbound packet exceeded max packet bytes";
@@ -553,7 +557,8 @@ public class GlobalConfiguration extends Part {
     public String serverModName = ServerBuildInfo.buildInfo().brandName();
     public boolean displayWorldLoadScreenForPortaling = true;
     public boolean displayWorldLoadScreenForTeleporting = true;
-    public boolean cacheMinecraft2BukkitEntityTypeConversion = false;
+    // Canvas aggressive defaults: cache expensive type conversion; no tile entity snapshot overhead
+    public boolean cacheMinecraft2BukkitEntityTypeConversion = true;
     public boolean tileEntitySnapshotCreation = false;
     public String defaultRespawnDimensionKey = Level.OVERWORLD.identifier().toString();
 
