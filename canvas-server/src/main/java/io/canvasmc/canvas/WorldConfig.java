@@ -274,7 +274,7 @@ public class WorldConfig extends Part {
         option("disableGrassLightChecks").docs("Disables grass light checks, so grass always spreads despite being in darkness");
     }
 
-    public boolean chainEndCrystalExplosions = false;
+    public boolean chainEndCrystalExplosions = true;
     public boolean disableSnowLightChecks = false;
     public boolean disableGrassLightChecks = false;
 
@@ -567,7 +567,7 @@ public class WorldConfig extends Part {
     public double waypointUpdateScale = 4000.0D;
     public boolean disableCriterionTrigger = false;
     public boolean cactusCheckSurvivalBeforeGrowth = false;
-    public boolean enableSuffocationOptimization = false;
+    public boolean enableSuffocationOptimization = true;
 
     public Sleeping sleeping = new Sleeping();
 

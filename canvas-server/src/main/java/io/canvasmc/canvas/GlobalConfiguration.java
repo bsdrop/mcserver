@@ -622,7 +622,7 @@ public class GlobalConfiguration extends Part {
         public long length = 30;
         public ChronoUnit unit = ChronoUnit.DAYS;
 
-        public boolean logEnderPearlRewriteActions = true;
+        public boolean logEnderPearlRewriteActions = false;
     }
 
     public EnchantCommand enchantCommand = new EnchantCommand();
