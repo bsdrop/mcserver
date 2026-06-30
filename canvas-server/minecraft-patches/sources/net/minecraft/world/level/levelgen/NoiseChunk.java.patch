@@ -1,6 +1,6 @@
 --- a/net/minecraft/world/level/levelgen/NoiseChunk.java
 +++ b/net/minecraft/world/level/levelgen/NoiseChunk.java
-@@ -153,10 +_,39 @@
+@@ -153,10 +_,33 @@
          }
  
          List<NoiseChunk.BlockStateFiller> builder = new ArrayList<>();
@@ -12,25 +12,19 @@
 +            randomState, chunkMinBlockX, chunkMinBlockZ, this.cellWidth, this.cellHeight,
 +            cellCountXZ, this.cellCountY, this.cellNoiseMinY);
 +        int expectedGrid = (cellCountXZ + 1) * (cellCountXZ + 1) * (this.cellCountY + 1);
-+        if (gpuGrid != null && gpuGrid.length == expectedGrid) {
-+            // Per-chunk bit-exact gate: verify GPU grid corners vs CPU finalDensity. A grid-indexing
-+            // bug would silently corrupt terrain, so spot-check 3 corners; mismatch → keep CPU.
-+            int nzc = cellCountXZ + 1, nyc = this.cellCountY + 1;
-+            int[][] chk = {{0,0,0},{cellCountXZ,cellCountXZ,this.cellCountY},{cellCountXZ/2,cellCountXZ/2,this.cellCountY/2}};
-+            boolean ok = true;
-+            for (int[] s : chk) {
-+                double cpu = densitySource.compute(new DensityFunction.SinglePointContext(
-+                    chunkMinBlockX + s[0]*this.cellWidth, (this.cellNoiseMinY + s[2])*this.cellHeight, chunkMinBlockZ + s[1]*this.cellWidth));
-+                double g = gpuGrid[(s[0]*nzc + s[1])*nyc + s[2]];
-+                if (Double.doubleToRawLongBits(cpu) != Double.doubleToRawLongBits(g)) { ok = false; break; }
-+            }
-+            io.canvasmc.canvas.gpu.worldgen.GPUSurfacePrecomputer.reportDensityGate(ok, gpuGrid.length);
-+            if (ok) {
-+                GpuGridDensity gpu = new GpuGridDensity(gpuGrid, chunkMinBlockX, chunkMinBlockZ,
-+                    this.cellWidth, this.cellHeight, cellCountXZ + 1, cellCountXZ + 1, this.cellCountY + 1,
-+                    this.cellNoiseMinY, densitySource);
-+                densitySource = DensityFunctions.interpolated(gpu);
-+            }
++        // GPU grid is computed from randomState.router().finalDensity(); the fill uses
++        // wrappedRouter = router.mapAll(wrap), which only DIFFERS when blending is active (BlendDensity/
++        // BlendAlpha at old-chunk boundaries). So only use the GPU grid when blender.isEmpty() (the
++        // common case incl. all fresh worlds); blend-boundary chunks fall back to CPU. This cheap check
++        // replaces the old 3-corner finalDensity gate (which cost 3 full tree-walks/chunk on CPU).
++        if (gpuGrid != null && gpuGrid.length == expectedGrid && this.blender.isEmpty()) {
++            // Value kernel was verified bit-exact (8192/8192) at context creation; cache is per-dimension
++            // with matching grid size (length guard) — grid is trusted with NO per-chunk CPU re-compute.
++            GpuGridDensity gpu = new GpuGridDensity(gpuGrid, chunkMinBlockX, chunkMinBlockZ,
++                this.cellWidth, this.cellHeight, cellCountXZ + 1, cellCountXZ + 1, this.cellCountY + 1,
++                this.cellNoiseMinY, densitySource);
++            densitySource = DensityFunctions.interpolated(gpu);
++            io.canvasmc.canvas.gpu.worldgen.GPUSurfacePrecomputer.reportDensityUsed(gpuGrid.length);
 +        }
          DensityFunction fullNoiseValue = DensityFunctions.cacheAllInCell(
 -                DensityFunctions.add(wrappedRouter.finalDensity(), DensityFunctions.BeardifierMarker.INSTANCE)

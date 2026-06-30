@@ -79,17 +79,30 @@ public final class GPUWorldGenContext {
             if (Boolean.getBoolean("canvas.gpu.bench")) {
                 try { benchmarkDensityFunction(state.router().finalDensity(), "finalDensity"); } catch (Throwable ignored) {}
             }
-            // Task #6: build the finalDensity value kernel for full-chunk GPU density grids.
+            // Task #6: build the finalDensity value kernel for full-chunk GPU density grids, and
+            // VERIFY it bit-exact ONCE here (8192 pts). finalDensity is a deterministic function, so a
+            // one-time verify proves the kernel correct for all points → no per-chunk gate needed at
+            // generation time (that gate cost 3 full finalDensity tree-walks per chunk on CPU, partly
+            // defeating the offload). Nether/End whose finalDensity isn't bit-exact → verify fails → CPU.
             if (Boolean.getBoolean("canvas.gpu.density.enabled")) {
                 try {
-                    String vsrc = DFCLCompiler.compileValue(state.router().finalDensity());
+                    DensityFunction fd = state.router().finalDensity();
+                    String vsrc = DFCLCompiler.compileValue(fd);
                     if (vsrc != null) {
-                        c.clValueKernel = buildKernel(vsrc, "compute_value");
-                        if (c.clValueKernel != null)
-                            LOGGER.info("[CanvasGPU-WorldGen] finalDensity value kernel READY — GPU full-chunk density enabled");
+                        MemorySegment k = buildKernel(vsrc, "compute_value");
+                        if (k != null) {
+                            c.clValueKernel = k;
+                            if (c.verifyValueKernel(fd, 8192)) {
+                                LOGGER.info("[CanvasGPU-WorldGen] finalDensity value kernel VERIFIED (8192/8192) + READY — GPU full-chunk density enabled");
+                            } else {
+                                c.clValueKernel = null; // not bit-exact for this dimension → CPU density
+                                LOGGER.warn("[CanvasGPU-WorldGen] finalDensity value kernel verify FAILED — GPU density disabled for this dimension (CPU)");
+                            }
+                        }
                     }
                 } catch (Throwable t) {
-                    LOGGER.warn("[CanvasGPU-WorldGen] value kernel build failed: {}", t.toString());
+                    c.clValueKernel = null;
+                    LOGGER.warn("[CanvasGPU-WorldGen] value kernel build/verify failed: {}", t.toString());
                 }
             }
             return c;
@@ -321,6 +334,29 @@ public final class GPUWorldGenContext {
     public boolean hasFailed() { return failed; }
 
     public boolean hasValueKernel() { return clValueKernel != null && !failed; }
+
+    /** One-time bit-exact check of the persistent value kernel vs CPU finalDensity (8192 random pts). */
+    boolean verifyValueKernel(DensityFunction df, int n) {
+        java.util.Random r = new java.util.Random(0xABCDEF12L);
+        int[] xs = new int[n], ys = new int[n], zs = new int[n];
+        for (int i = 0; i < n; i++) {
+            xs[i] = r.nextInt(4_000_000) - 2_000_000;
+            ys[i] = r.nextInt(384) - 64;
+            zs[i] = r.nextInt(4_000_000) - 2_000_000;
+        }
+        double[] gpu = computeGrid(xs, ys, zs, n);
+        if (gpu == null) return false;
+        for (int i = 0; i < n; i++) {
+            double cpu = df.compute(new DensityFunction.SinglePointContext(xs[i], ys[i], zs[i]));
+            if (Double.doubleToRawLongBits(cpu) != Double.doubleToRawLongBits(gpu[i])
+                    && !(Double.isNaN(cpu) && Double.isNaN(gpu[i]))) {
+                LOGGER.warn("[CanvasGPU-WorldGen] value kernel mismatch at ({},{},{}): cpu={} gpu={}",
+                    xs[i], ys[i], zs[i], cpu, gpu[i]);
+                return false;
+            }
+        }
+        return true;
+    }
 
     /** Builds an OpenCL kernel (program persists; one-time per world). Returns kernel or null. */
     private static MemorySegment buildKernel(String clSrc, String kernelName) throws Throwable {

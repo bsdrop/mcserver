@@ -182,21 +182,16 @@ public final class GPUSurfacePrecomputer {
     private static final AtomicLong gpuDensityChunks = new AtomicLong();
     private static final AtomicLong gpuDensityBatches = new AtomicLong();
 
-    /** Logs whether the per-chunk GPU density gate passed (GPU used) or failed (CPU fallback). */
-    public static void reportDensityGate(boolean ok, int gridPts) {
-        if (ok) {
-            if (reportedGatePass.compareAndSet(false, true))
-                LOGGER.info("[CanvasGPU-Surface] GPU FULL-CHUNK DENSITY ACTIVE — gate passed, {} corner pts/chunk, "
-                    + "tile-aligned batch {}x{} ({} chunks/dispatch)", gridPts, DENSITY_TILE, DENSITY_TILE,
-                    DENSITY_TILE * DENSITY_TILE);
-            long n = gpuDensityChunks.incrementAndGet();
-            if (n % 256 == 0) // ongoing visibility: confirms GPU is generating chunk density
-                LOGGER.info("[CanvasGPU-Surface] GPU density: {} chunks via {} GPU tile-batch dispatches",
-                    n, gpuDensityBatches.get());
-        } else {
-            if (reportedGateFail.compareAndSet(false, true))
-                LOGGER.warn("[CanvasGPU-Surface] GPU density gate FAILED (corner mismatch) — using CPU. Indexing bug? (logged once)");
-        }
+    /** Counts chunks whose density was generated on GPU (kernel pre-verified, no per-chunk gate). */
+    public static void reportDensityUsed(int gridPts) {
+        if (reportedGatePass.compareAndSet(false, true))
+            LOGGER.info("[CanvasGPU-Surface] GPU FULL-CHUNK DENSITY ACTIVE — {} corner pts/chunk, "
+                + "tile-aligned batch {}x{} ({} chunks/dispatch), kernel pre-verified (no per-chunk gate)",
+                gridPts, DENSITY_TILE, DENSITY_TILE, DENSITY_TILE * DENSITY_TILE);
+        long n = gpuDensityChunks.incrementAndGet();
+        if (n % 256 == 0)
+            LOGGER.info("[CanvasGPU-Surface] GPU density: {} chunks via {} GPU tile-batch dispatches",
+                n, gpuDensityBatches.get());
     }
 
     /** Total chunks whose density was generated on GPU (for /canvas gpu status, etc.). */
