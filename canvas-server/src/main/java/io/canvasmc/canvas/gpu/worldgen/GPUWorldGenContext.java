@@ -208,8 +208,7 @@ public final class GPUWorldGenContext {
         try {
             return dispatchSurface(blockXs, blockZs, N);
         } catch (Throwable t) {
-            failed = true;
-            LOGGER.error("[CanvasGPU-WorldGen] dispatch failed, disabling: {}", t.getMessage());
+            loudDisable("surface dispatch — " + t);
             return null;
         } finally {
             lock.unlock();
@@ -288,6 +287,31 @@ public final class GPUWorldGenContext {
         int err = (int) GPUNoiseAccelerator.canvas$mhSetKernelArg()
             .invoke(clKernel, idx, (long) ValueLayout.JAVA_INT.byteSize(), argBuf);
         if (err != CL_SUCCESS) throw new RuntimeException("clSetKernelArg int[" + idx + "]: " + err);
+    }
+
+    private final java.util.concurrent.atomic.AtomicBoolean loudLogged = new java.util.concurrent.atomic.AtomicBoolean(false);
+
+    /**
+     * Permanently disable GPU density for this dimension and log one big, impossible-to-miss banner.
+     * This is ONLY for anomalous/error fallbacks (GPU fault, NaN/garbage output, CL error, verify fail) —
+     * NOT the routine lock-contention "GPU busy → CPU" fallback (that is silent + counted via reportDensityMiss).
+     */
+    private void loudDisable(String reason) {
+        this.failed = true;
+        if (!loudLogged.compareAndSet(false, true)) return;
+        LOGGER.error(
+            "\n################################################################################"
+          + "\n##                                                                            ##"
+          + "\n##        CANVAS GPU WORLDGEN FELL BACK TO CPU  —  GPU DENSITY DISABLED        ##"
+          + "\n##                                                                            ##"
+          + "\n################################################################################"
+          + "\n##  reason: {}"
+          + "\n##  Terrain stays CORRECT (the CPU path is the bit-exact reference) but GPU"
+          + "\n##  acceleration is now OFF for this dimension until the server restarts."
+          + "\n##  A verified deterministic kernel should NEVER emit NaN/garbage — if the"
+          + "\n##  reason is an anomalous value, suspect a GPU driver/hardware fault."
+          + "\n################################################################################",
+            reason);
     }
 
     /** Release a CL device buffer if non-null; swallow release errors so they never mask the real exception. */
@@ -424,7 +448,18 @@ public final class GPUWorldGenContext {
                     if (rd != CL_SUCCESS) throw new RuntimeException("computeGrid read: " + rd);
                     GPUNoiseAccelerator.canvas$mhFinish().invoke(clQueue);
                     double[] out = new double[n];
-                    for (int i = 0; i < n; i++) out[i] = outMem.get(ValueLayout.JAVA_DOUBLE, (long) i * 8);
+                    for (int i = 0; i < n; i++) {
+                        double v = outMem.get(ValueLayout.JAVA_DOUBLE, (long) i * 8);
+                        // CL-side sanity guard: a verified deterministic kernel can only emit a finite,
+                        // O(1)-magnitude finalDensity. NaN / ±Inf / absurd magnitude ⇒ the GPU or driver
+                        // faulted (page-fault read, bit-flip); using it would corrupt terrain → bail to CPU.
+                        // (Cheap O(n) scan of already-resident data; this is the GPU-level "something is wrong"
+                        // detector — subtle bit-divergence is impossible here, that's caught once by verifyValueKernel.)
+                        if (!(v > -1.0e9 && v < 1.0e9)) {
+                            throw new ArithmeticException("anomalous GPU density out[" + i + "]=" + v + " (NaN/Inf/garbage — GPU fault)");
+                        }
+                        out[i] = v;
+                    }
                     return out;
                 } finally {
                     releaseClBuffer(bPos);
@@ -432,8 +467,7 @@ public final class GPUWorldGenContext {
                 }
             }
         } catch (Throwable t) {
-            failed = true;
-            LOGGER.error("[CanvasGPU-WorldGen] computeGrid failed, disabling: {}", t.getMessage());
+            loudDisable("computeGrid dispatch — " + t);
             return null;
         } finally {
             lock.unlock();
