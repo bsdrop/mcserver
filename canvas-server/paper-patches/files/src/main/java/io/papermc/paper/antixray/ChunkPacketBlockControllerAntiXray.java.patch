@@ -1,0 +1,20 @@
+--- a/src/main/java/io/papermc/paper/antixray/ChunkPacketBlockControllerAntiXray.java
++++ b/src/main/java/io/papermc/paper/antixray/ChunkPacketBlockControllerAntiXray.java
+@@ -387,7 +_,16 @@
+             }
+         }
+ 
+-        chunkPacketInfoAntiXray.getChunkPacket().setReady(true);
++        // Canvas start - cache the now-obfuscated block-data so all (non-bypass) players share one snapshot
++        // instead of re-obfuscating per player. Seq-guarded: a concurrent block change (markUnsaved bumps the
++        // seq) makes canvas$tryCacheObfuscated drop this snapshot, so stale terrain is never served to new loaders.
++        final net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket completedPacket = chunkPacketInfoAntiXray.getChunkPacket();
++        final net.minecraft.world.level.chunk.LevelChunk obfChunk = chunkPacketInfoAntiXray.getChunk();
++        if (obfChunk != null) {
++            obfChunk.canvas$tryCacheObfuscated(completedPacket.canvas$chunkData(), completedPacket.canvas$buildSeq());
++        }
++        completedPacket.setReady(true);
++        // Canvas end
+     }
+ 
+     private void obfuscateLayer(int y, BitStorageReader bitStorageReader, BitStorageWriter bitStorageWriter, boolean[] solid, boolean[] obfuscate, int[] presetBlockStateBits, boolean[][] current, boolean[][] next, boolean[][] nextNext, LevelChunkSection[] nearbyChunkSections, IntSupplier random) {

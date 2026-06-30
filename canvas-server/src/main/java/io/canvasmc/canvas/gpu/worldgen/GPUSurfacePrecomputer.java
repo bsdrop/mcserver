@@ -189,9 +189,19 @@ public final class GPUSurfacePrecomputer {
                 + "tile-aligned batch {}x{} ({} chunks/dispatch), kernel pre-verified (no per-chunk gate)",
                 gridPts, DENSITY_TILE, DENSITY_TILE, DENSITY_TILE * DENSITY_TILE);
         long n = gpuDensityChunks.incrementAndGet();
-        if (n % 256 == 0)
-            LOGGER.info("[CanvasGPU-Surface] GPU density: {} chunks via {} GPU tile-batch dispatches",
-                n, gpuDensityBatches.get());
+        if (n % 256 == 0) {
+            long miss = gpuDensityMisses.get();
+            long total = n + miss;
+            LOGGER.info("[CanvasGPU-Surface] GPU density: {} chunks via {} dispatches | hit-rate {}% ({} GPU / {} CPU-fallback)",
+                n, gpuDensityBatches.get(), total == 0 ? 0 : (100 * n / total), n, miss);
+        }
+    }
+
+    private static final AtomicLong gpuDensityMisses = new AtomicLong();
+
+    /** A chunk's density was computed on CPU instead of GPU (tryLock fail, off-grid, size mismatch, or blend boundary). */
+    public static void reportDensityMiss() {
+        gpuDensityMisses.incrementAndGet();
     }
 
     /** Total chunks whose density was generated on GPU (for /canvas gpu status, etc.). */

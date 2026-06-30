@@ -1,10 +1,12 @@
 --- a/net/minecraft/network/protocol/game/ClientboundLevelChunkWithLightPacket.java
 +++ b/net/minecraft/network/protocol/game/ClientboundLevelChunkWithLightPacket.java
-@@ -40,6 +_,21 @@
+@@ -40,6 +_,30 @@
          // Paper start - Anti-Xray
          this(levelChunk, lightEngine, skyChangedLightSectionFilter, blockChangedLightSectionFilter, true);
      }
-+    // Canvas start - reuse cached block-data serialization across players (anti-xray-off path only); light is rebuilt fresh each send
++    // Canvas start - reuse cached block-data serialization across players; light is rebuilt fresh each send.
++    // Works for both the anti-xray-off (plain) and anti-xray-on (pre-obfuscated) caches: the cached
++    // ClientboundLevelChunkPacketData is fully built/obfuscated, so the packet is immediately ready.
 +    public ClientboundLevelChunkWithLightPacket(
 +        final LevelChunk levelChunk,
 +        final ClientboundLevelChunkPacketData cachedChunkData,
@@ -17,8 +19,23 @@
 +        this.z = chunkPos.z();
 +        this.chunkData = cachedChunkData;
 +        this.lightData = new ClientboundLightUpdatePacketData(chunkPos, lightEngine, skyChangedLightSectionFilter, blockChangedLightSectionFilter);
++        this.setReady(true); // cached data is complete (no async obfuscation pending) — must mark ready or Connection holds it forever
 +    }
++
++    /** Block-data portion of this packet (for caching the obfuscated result across players). */
++    public ClientboundLevelChunkPacketData canvas$chunkData() { return this.chunkData; }
++    /** Chunk mutation-seq captured when this packet's block data was serialized (anti-xray cache staleness guard). */
++    public long canvas$buildSeq() { return this.canvas$buildSeq; }
++    private long canvas$buildSeq;
 +    // Canvas end
      public ClientboundLevelChunkWithLightPacket(
          final LevelChunk levelChunk,
          final LevelLightEngine lightEngine,
+@@ -51,6 +_,7 @@
+         ChunkPos chunkPos = levelChunk.getPos();
+         this.x = chunkPos.x();
+         this.z = chunkPos.z();
++        this.canvas$buildSeq = levelChunk.canvas$getPacketSeq(); // Canvas - capture mutation-seq at block-data serialization for anti-xray cache staleness guard
+         io.papermc.paper.antixray.ChunkPacketInfo<net.minecraft.world.level.block.state.BlockState> chunkPacketInfo = modifyBlocks ? levelChunk.getLevel().chunkPacketBlockController.getChunkPacketInfo(this, levelChunk) : null; // Paper - Anti-Xray
+         this.chunkData = new ClientboundLevelChunkPacketData(levelChunk, chunkPacketInfo); // Paper - Anti-Xray
+         this.lightData = new ClientboundLightUpdatePacketData(chunkPos, lightEngine, skyChangedLightSectionFilter, blockChangedLightSectionFilter);

@@ -1,6 +1,6 @@
 --- a/net/minecraft/world/level/levelgen/NoiseChunk.java
 +++ b/net/minecraft/world/level/levelgen/NoiseChunk.java
-@@ -153,10 +_,33 @@
+@@ -153,10 +_,36 @@
          }
  
          List<NoiseChunk.BlockStateFiller> builder = new ArrayList<>();
@@ -25,6 +25,9 @@
 +                this.cellNoiseMinY, densitySource);
 +            densitySource = DensityFunctions.interpolated(gpu);
 +            io.canvasmc.canvas.gpu.worldgen.GPUSurfacePrecomputer.reportDensityUsed(gpuGrid.length);
++        } else {
++            // Canvas - GPU density miss (CPU fallback): gpuGrid null (tryLock fail/off-grid), size mismatch, or blend boundary
++            io.canvasmc.canvas.gpu.worldgen.GPUSurfacePrecomputer.reportDensityMiss();
 +        }
          DensityFunction fullNoiseValue = DensityFunctions.cacheAllInCell(
 -                DensityFunctions.add(wrappedRouter.finalDensity(), DensityFunctions.BeardifierMarker.INSTANCE)

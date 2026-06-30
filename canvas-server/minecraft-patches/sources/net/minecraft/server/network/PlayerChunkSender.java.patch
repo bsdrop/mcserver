@@ -9,14 +9,25 @@
      public static final float MIN_CHUNKS_PER_TICK = 0.01F;
      public static final float MAX_CHUNKS_PER_TICK = 64.0F;
      private static final float START_CHUNKS_PER_TICK = 9.0F;
-@@ -81,7 +_,13 @@
+@@ -81,7 +_,24 @@
      public static void sendChunk(final ServerGamePacketListenerImpl connection, final ServerLevel level, final LevelChunk chunk) { // Paper - rewrite chunk system - public
          // Paper start - Anti-Xray
          final boolean shouldModify = level.chunkPacketBlockController.shouldModify(connection.player, chunk);
 -        connection.send(new ClientboundLevelChunkWithLightPacket(chunk, level.getLightEngine(), null, null, shouldModify));
-+        // Canvas start - reuse cached block serialization across players when anti-xray is not modifying this chunk
-+        if (!shouldModify && CACHE_CHUNK_PACKET_DATA) {
++        // Canvas start - reuse cached block serialization across players
++        if (CACHE_CHUNK_PACKET_DATA && !shouldModify) {
++            // anti-xray off / bypass: plain serialized bytes are identical for every player
 +            connection.send(new ClientboundLevelChunkWithLightPacket(chunk, chunk.canvas$getCachedChunkData(), level.getLightEngine(), null, null));
++        } else if (CACHE_CHUNK_PACKET_DATA) {
++            // anti-xray on: obfuscation is player-independent and (once cached) deterministic per chunk-state,
++            // so share one obfuscated snapshot across all players. First sender builds it via the async path
++            // below; ChunkPacketBlockControllerAntiXray caches the result on completion.
++            net.minecraft.network.protocol.game.ClientboundLevelChunkPacketData obf = chunk.canvas$getCachedObfuscatedChunkData();
++            if (obf != null) {
++                connection.send(new ClientboundLevelChunkWithLightPacket(chunk, obf, level.getLightEngine(), null, null));
++            } else {
++                connection.send(new ClientboundLevelChunkWithLightPacket(chunk, level.getLightEngine(), null, null, shouldModify));
++            }
 +        } else {
 +            connection.send(new ClientboundLevelChunkWithLightPacket(chunk, level.getLightEngine(), null, null, shouldModify));
 +        }

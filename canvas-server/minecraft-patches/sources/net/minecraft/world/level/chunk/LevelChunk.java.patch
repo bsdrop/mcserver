@@ -50,16 +50,28 @@
              this.setBlockEntity(blockEntity);
          }
  
-@@ -244,9 +_,28 @@
+@@ -244,9 +_,58 @@
  
      @Override
      public void markUnsaved() {
-+        this.canvas$cachedChunkData = null; // Canvas - invalidate cached chunk packet data on any mutation
++        // Canvas start - invalidate cached chunk packet data on any mutation; bump seq so in-flight async obfuscation can't cache stale data
++        this.canvas$cachedChunkData = null;
++        this.canvas$cachedObfuscatedChunkData = null;
++        this.canvas$packetSeq++;
++        // Canvas end
          super.markUnsaved(); // Folia - region threading - unsavedListener is not really use
      }
  
 +    // Canvas start - cached chunk packet data (block serialization reused across players; invalidated on markUnsaved)
 +    private net.minecraft.network.protocol.game.ClientboundLevelChunkPacketData canvas$cachedChunkData;
++    // anti-xray path: obfuscated data is built asynchronously on a non-region thread, so these are volatile
++    private volatile net.minecraft.network.protocol.game.ClientboundLevelChunkPacketData canvas$cachedObfuscatedChunkData;
++    private volatile long canvas$packetSeq;
++
++    /** Monotonic mutation counter; bumped in markUnsaved(). Used to reject caching stale async-obfuscated data. */
++    public long canvas$getPacketSeq() {
++        return this.canvas$packetSeq;
++    }
 +
 +    /**
 +     * Returns the serialized block-data portion of this chunk's network packet, building and caching it
@@ -73,6 +85,24 @@
 +            this.canvas$cachedChunkData = data;
 +        }
 +        return data;
++    }
++
++    /** Shared obfuscated block-data (anti-xray on). null until the first async obfuscation completes and caches it. */
++    public net.minecraft.network.protocol.game.ClientboundLevelChunkPacketData canvas$getCachedObfuscatedChunkData() {
++        return this.canvas$cachedObfuscatedChunkData;
++    }
++
++    /**
++     * Caches obfuscated block-data shared across all (non-bypass) players. Called from the anti-xray executor
++     * thread on obfuscation completion. The write-then-recheck against {@code buildSeq} ensures a concurrent
++     * markUnsaved() (which bumps the seq) always wins, so a stale snapshot can never be resurrected after a
++     * block change. (Obfuscation only swaps hidden, non-visible blocks, so a benign in-window race is harmless.)
++     */
++    public void canvas$tryCacheObfuscated(final net.minecraft.network.protocol.game.ClientboundLevelChunkPacketData data, final long buildSeq) {
++        this.canvas$cachedObfuscatedChunkData = data;
++        if (this.canvas$packetSeq != buildSeq) {
++            this.canvas$cachedObfuscatedChunkData = null;
++        }
 +    }
 +    // Canvas end
 +
