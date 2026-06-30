@@ -1,0 +1,10 @@
+--- a/src/main/java/io/papermc/paper/configuration/GlobalConfiguration.java
++++ b/src/main/java/io/papermc/paper/configuration/GlobalConfiguration.java
+@@ -328,7 +_,7 @@
+         public boolean useDimensionTypeForCustomSpawners = false;
+         public boolean strictAdvancementDimensionCheck = false;
+-        public IntOr.Default compressionLevel = IntOr.Default.USE_DEFAULT;
++        public IntOr.Default compressionLevel = new IntOr.Default(java.util.OptionalInt.of(6)); // Canvas - libdeflate level 6 sweet spot
+         @Comment("Defines the leniency distance added on the server to the interaction range of a player when validating interact packets.")
+         public DoubleOr.Default clientInteractionLeniencyDistance = DoubleOr.Default.USE_DEFAULT;
+         @Comment("Defines how many orbs groups can exist in an area.")
