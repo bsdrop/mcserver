@@ -1,0 +1,55 @@
+--- /dev/null
++++ b/net/minecraft/world/level/levelgen/GpuPerBlockDensity.java
+@@ -1,0 +_,52 @@
++package net.minecraft.world.level.levelgen;
++
++/**
++ * Canvas GPU worldgen: a DensityFunction backed by a precomputed PER-BLOCK grid of the (unwrapped)
++ * finalDensity — the GPU has already done the trilinear interpolation of the cell corners
++ * (bit-exact vs MC's NoiseInterpolator/Mth.lerp3, proven in gpu_verify/trilerp_match.c).
++ *
++ * Unlike {@link GpuGridDensity} (corner grid → wrapped in interpolated() → CPU NoiseInterpolator),
++ * this is used DIRECTLY as the density source: NoiseInterpolator is never created, so the ~18%-of-
++ * worldgen CPU interpolation is skipped entirely. Off-region queries fall back to CPU compute.
++ *
++ * Block layout matches the GPU interp kernel: index = ((lx*bZ)+lz)*bY + ly, where
++ * lx=blockX-originX, lz=blockZ-originZ, ly=blockY-minBlockY.
++ */
++public final class GpuPerBlockDensity implements DensityFunction.SimpleFunction {
++    private final double[] perBlock;
++    private final int originX, originZ, minBlockY;
++    private final int bX, bY, bZ;
++    private final DensityFunction fallback;
++
++    public GpuPerBlockDensity(double[] perBlock, int originX, int originZ, int minBlockY,
++                              int bX, int bY, int bZ, DensityFunction fallback) {
++        this.perBlock = perBlock;
++        this.originX = originX; this.originZ = originZ; this.minBlockY = minBlockY;
++        this.bX = bX; this.bY = bY; this.bZ = bZ;
++        this.fallback = fallback;
++    }
++
++    @Override
++    public double compute(final DensityFunction.FunctionContext context) {
++        int lx = context.blockX() - this.originX;
++        int lz = context.blockZ() - this.originZ;
++        int ly = context.blockY() - this.minBlockY;
++        if (lx >= 0 && lx < this.bX && lz >= 0 && lz < this.bZ && ly >= 0 && ly < this.bY) {
++            return this.perBlock[((lx * this.bZ) + lz) * this.bY + ly];
++        }
++        return this.fallback.compute(context); // off-region safety fallback (CPU)
++    }
++
++    @Override
++    public void fillArray(final double[] output, final DensityFunction.ContextProvider contextProvider) {
++        contextProvider.fillAllDirectly(output, this);
++    }
++
++    @Override public double minValue() { return this.fallback.minValue(); }
++    @Override public double maxValue() { return this.fallback.maxValue(); }
++
++    @Override
++    public net.minecraft.util.KeyDispatchDataCodec<? extends DensityFunction> codec() {
++        throw new UnsupportedOperationException("GpuPerBlockDensity is not serializable");
++    }
++}

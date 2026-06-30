@@ -42,6 +42,27 @@ public final class GPUWorldGenContext {
 
     // Optional finalDensity value kernel (compute_value) for full-chunk density grids (Task #6).
     private volatile MemorySegment clValueKernel = null;
+    // Optional fixed trilinear-interpolation kernel: corners -> per-block density on GPU (offloads
+    // MC's CPU NoiseInterpolator). Bit-exact vs Mth.lerp3 proven in gpu_verify/trilerp_match.c.
+    private volatile MemorySegment clInterpKernel = null;
+
+    // Fixed kernel: each work-item interpolates one block from the 8 surrounding cell corners.
+    // lerp(t,a,b)=a+t*(b-a) is NON-fma — FP_CONTRACT OFF keeps it bit-exact vs Java Mth.lerp3.
+    // Output layout: ((lx*bZ)+lz)*bY+ly. Corner layout: ((ix*nz)+iz)*ny+iy (matches GpuGridDensity).
+    private static final String INTERP_SRC =
+        "#pragma OPENCL EXTENSION cl_khr_fp64 : enable\n"
+      + "#pragma OPENCL FP_CONTRACT OFF\n"
+      + "static double lp(double t,double a,double b){return a+t*(b-a);}\n"
+      + "static double lp2(double a1,double a2,double x00,double x10,double x01,double x11){return lp(a2, lp(a1,x00,x10), lp(a1,x01,x11));}\n"
+      + "__kernel void interp(__global const double* c,__global double* out,int nx,int nz,int ny,int cw,int ch,int bX,int bY,int bZ){\n"
+      + "  int id=get_global_id(0); if(id>=bX*bY*bZ) return;\n"
+      + "  int ly=id%bY; int t=id/bY; int lz=t%bZ; int lx=t/bZ;\n"
+      + "  int cx=lx/cw,inX=lx%cw, cz=lz/cw,inZ=lz%cw, cy=ly/ch,inY=ly%ch;\n"
+      + "  double Xf=(double)inX/(double)cw, Yf=(double)inY/(double)ch, Zf=(double)inZ/(double)cw;\n"
+      + "  long b00=((long)cx*nz+cz)*ny+cy, b10=((long)(cx+1)*nz+cz)*ny+cy, b01=((long)cx*nz+(cz+1))*ny+cy, b11=((long)(cx+1)*nz+(cz+1))*ny+cy;\n"
+      + "  double n000=c[b00],n010=c[b00+1], n100=c[b10],n110=c[b10+1], n001=c[b01],n011=c[b01+1], n101=c[b11],n111=c[b11+1];\n"
+      + "  out[id]=lp(Zf, lp2(Xf,Yf,n000,n100,n010,n110), lp2(Xf,Yf,n001,n101,n011,n111));\n"
+      + "}\n";
 
     private volatile boolean failed = false;
 
@@ -94,6 +115,18 @@ public final class GPUWorldGenContext {
                             c.clValueKernel = k;
                             if (c.verifyValueKernel(fd, 8192)) {
                                 LOGGER.info("[CanvasGPU-WorldGen] finalDensity value kernel VERIFIED (8192/8192) + READY — GPU full-chunk density enabled");
+                                // Optional: GPU per-block interpolation (offload MC's CPU NoiseInterpolator).
+                                if (Boolean.getBoolean("canvas.gpu.interp")) {
+                                    try {
+                                        MemorySegment ik = buildKernel(INTERP_SRC, "interp");
+                                        if (ik != null && c.verifyInterpKernel(ik, 0)) {
+                                            c.clInterpKernel = ik;
+                                            LOGGER.info("[CanvasGPU-WorldGen] trilerp interp kernel VERIFIED bit-exact vs Mth.lerp3 + READY — GPU per-block interpolation enabled");
+                                        } else {
+                                            LOGGER.warn("[CanvasGPU-WorldGen] trilerp interp kernel verify FAILED — per-block interp stays on CPU");
+                                        }
+                                    } catch (Throwable t) { LOGGER.warn("[CanvasGPU-WorldGen] interp kernel build failed: {}", t.toString()); }
+                                }
                             } else {
                                 c.clValueKernel = null; // not bit-exact for this dimension → CPU density
                                 LOGGER.warn("[CanvasGPU-WorldGen] finalDensity value kernel verify FAILED — GPU density disabled for this dimension (CPU)");
@@ -472,6 +505,92 @@ public final class GPUWorldGenContext {
         } finally {
             lock.unlock();
         }
+    }
+
+    public boolean hasInterpKernel() { return clInterpKernel != null && !failed; }
+
+    /**
+     * GPU trilinear interpolation: turn a cell-corner grid (from computeGrid) into a per-block density
+     * grid, reproducing MC's NoiseInterpolator/Mth.lerp3 bit-exactly (proven in gpu_verify/trilerp_match.c).
+     * Returns null on GPU-busy/failure → caller keeps the CPU NoiseInterpolator path.
+     * Output layout ((lx*bZ)+lz)*bY+ly with bX=(nx-1)*cw, bY=(ny-1)*ch, bZ=(nz-1)*cw.
+     */
+    public double[] computeInterpChunk(double[] corners, int nx, int nz, int ny, int cw, int ch) {
+        if (failed || clInterpKernel == null) return null;
+        final int bX = (nx - 1) * cw, bY = (ny - 1) * ch, bZ = (nz - 1) * cw;
+        final int total = bX * bY * bZ;
+        if (total <= 0) return null;
+        if (!lock.tryLock()) return null;
+        try {
+            try (Arena a = Arena.ofConfined()) {
+                MemorySegment ctx = MemorySegment.ofAddress(GPUNoiseAccelerator.canvas$clContext());
+                MemorySegment cornMem = a.allocate((long) corners.length * 8);
+                for (int i = 0; i < corners.length; i++) cornMem.set(ValueLayout.JAVA_DOUBLE, (long) i * 8, corners[i]);
+                MemorySegment errBuf = a.allocate(ValueLayout.JAVA_INT);
+                MemorySegment bC = MemorySegment.NULL, bO = MemorySegment.NULL;
+                try {
+                    bC = (MemorySegment) GPUNoiseAccelerator.canvas$mhCreateBuffer().invoke(ctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, (long) corners.length * 8, cornMem, errBuf);
+                    checkErr(errBuf, "interp clCreateBuffer corners");
+                    bO = (MemorySegment) GPUNoiseAccelerator.canvas$mhCreateBuffer().invoke(ctx, CL_MEM_WRITE_ONLY, (long) total * 8, MemorySegment.NULL, errBuf);
+                    checkErr(errBuf, "interp clCreateBuffer out");
+                    setArgS(a, clInterpKernel, 0, ValueLayout.ADDRESS.byteSize(), bC);
+                    setArgS(a, clInterpKernel, 1, ValueLayout.ADDRESS.byteSize(), bO);
+                    int[] iargs = { nx, nz, ny, cw, ch, bX, bY, bZ };
+                    for (int j = 0; j < iargs.length; j++) {
+                        MemorySegment ib = a.allocate(ValueLayout.JAVA_INT); ib.set(ValueLayout.JAVA_INT, 0, iargs[j]);
+                        GPUNoiseAccelerator.canvas$mhSetKernelArg().invoke(clInterpKernel, 2 + j, (long) ValueLayout.JAVA_INT.byteSize(), ib);
+                    }
+                    MemorySegment gs = a.allocate(ValueLayout.JAVA_LONG); gs.set(ValueLayout.JAVA_LONG, 0, (long) total);
+                    int nd = (int) GPUNoiseAccelerator.canvas$mhEnqueueNDRangeKernel().invoke(clQueue, clInterpKernel, 1, MemorySegment.NULL, gs, MemorySegment.NULL, 0, MemorySegment.NULL, MemorySegment.NULL);
+                    if (nd != CL_SUCCESS) throw new RuntimeException("interp NDRange: " + nd);
+                    MemorySegment outMem = a.allocate((long) total * 8);
+                    int rd = (int) GPUNoiseAccelerator.canvas$mhEnqueueReadBuffer().invoke(clQueue, bO, CL_TRUE, 0L, (long) total * 8, outMem, 0, MemorySegment.NULL, MemorySegment.NULL);
+                    if (rd != CL_SUCCESS) throw new RuntimeException("interp read: " + rd);
+                    GPUNoiseAccelerator.canvas$mhFinish().invoke(clQueue);
+                    double[] out = new double[total];
+                    for (int i = 0; i < total; i++) {
+                        double v = outMem.get(ValueLayout.JAVA_DOUBLE, (long) i * 8);
+                        if (!(v > -1.0e9 && v < 1.0e9)) throw new ArithmeticException("anomalous GPU interp out[" + i + "]=" + v);
+                        out[i] = v;
+                    }
+                    return out;
+                } finally {
+                    releaseClBuffer(bC);
+                    releaseClBuffer(bO);
+                }
+            }
+        } catch (Throwable t) {
+            loudDisable("interp dispatch — " + t);
+            return null;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /** One-time bit-exact check of the trilerp kernel vs CPU Mth.lerp3 over a small synthetic corner grid. */
+    boolean verifyInterpKernel(MemorySegment ik, int unused) {
+        this.clInterpKernel = ik; // set so computeInterpChunk runs; nulled on any mismatch
+        try {
+            final int nx = 3, nz = 3, ny = 3, cw = 4, ch = 4;
+            double[] corners = new double[nx * nz * ny];
+            java.util.Random r = new java.util.Random(1234);
+            for (int i = 0; i < corners.length; i++) corners[i] = (r.nextDouble() - 0.5) * 4.0;
+            double[] gpu = computeInterpChunk(corners, nx, nz, ny, cw, ch);
+            if (gpu == null) { this.clInterpKernel = null; return false; }
+            int bX = (nx - 1) * cw, bY = (ny - 1) * ch, bZ = (nz - 1) * cw;
+            for (int lx = 0; lx < bX; lx++) for (int lz = 0; lz < bZ; lz++) for (int ly = 0; ly < bY; ly++) {
+                int cx = lx / cw, inX = lx % cw, cz = lz / cw, inZ = lz % cw, cy = ly / ch, inY = ly % ch;
+                double Xf = (double) inX / cw, Yf = (double) inY / ch, Zf = (double) inZ / cw;
+                int b00 = (cx * nz + cz) * ny + cy, b10 = ((cx + 1) * nz + cz) * ny + cy,
+                    b01 = (cx * nz + (cz + 1)) * ny + cy, b11 = ((cx + 1) * nz + (cz + 1)) * ny + cy;
+                double cpu = net.minecraft.util.Mth.lerp3(Xf, Yf, Zf,
+                    corners[b00], corners[b10], corners[b00 + 1], corners[b10 + 1],
+                    corners[b01], corners[b11], corners[b01 + 1], corners[b11 + 1]);
+                int idx = ((lx * bZ) + lz) * bY + ly;
+                if (Double.doubleToRawLongBits(cpu) != Double.doubleToRawLongBits(gpu[idx])) { this.clInterpKernel = null; return false; }
+            }
+            return true;
+        } catch (Throwable t) { this.clInterpKernel = null; return false; }
     }
 
     /**

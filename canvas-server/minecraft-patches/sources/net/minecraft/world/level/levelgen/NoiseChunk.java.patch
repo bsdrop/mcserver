@@ -12,7 +12,7 @@
      private final Map<DensityFunction, DensityFunction> wrapped = new HashMap<>();
      private final Long2IntMap preliminarySurfaceLevelCache = new Long2IntOpenHashMap();
      private final Aquifer aquifer;
-@@ -153,10 +_,36 @@
+@@ -153,10 +_,48 @@
          }
  
          List<NoiseChunk.BlockStateFiller> builder = new ArrayList<>();
@@ -32,10 +32,22 @@
 +        if (gpuGrid != null && gpuGrid.length == expectedGrid && this.blender.isEmpty()) {
 +            // Value kernel was verified bit-exact (8192/8192) at context creation; cache is per-dimension
 +            // with matching grid size (length guard) — grid is trusted with NO per-chunk CPU re-compute.
-+            GpuGridDensity gpu = new GpuGridDensity(gpuGrid, chunkMinBlockX, chunkMinBlockZ,
-+                this.cellWidth, this.cellHeight, cellCountXZ + 1, cellCountXZ + 1, this.cellCountY + 1,
-+                this.cellNoiseMinY, densitySource);
-+            densitySource = DensityFunctions.interpolated(gpu);
++            // Optional: let the GPU also do the trilinear interpolation (bit-exact vs NoiseInterpolator),
++            // feeding per-block density directly so MC's CPU interpolator is never created. null → corner path.
++            double[] perBlock = io.canvasmc.canvas.gpu.worldgen.GPUSurfacePrecomputer.computeInterpolated(
++                randomState, gpuGrid, this.cellWidth, this.cellHeight, cellCountXZ, this.cellCountY);
++            if (perBlock != null) {
++                int bX = cellCountXZ * this.cellWidth, bY = this.cellCountY * this.cellHeight, bZ = cellCountXZ * this.cellWidth;
++                int minBlockY = this.cellNoiseMinY * this.cellHeight;
++                densitySource = new GpuPerBlockDensity(perBlock, chunkMinBlockX, chunkMinBlockZ, minBlockY, bX, bY, bZ, densitySource);
++            } else {
++                // Value kernel was verified bit-exact (8192/8192) at context creation; cache is per-dimension
++                // with matching grid size (length guard) — grid is trusted with NO per-chunk CPU re-compute.
++                GpuGridDensity gpu = new GpuGridDensity(gpuGrid, chunkMinBlockX, chunkMinBlockZ,
++                    this.cellWidth, this.cellHeight, cellCountXZ + 1, cellCountXZ + 1, this.cellCountY + 1,
++                    this.cellNoiseMinY, densitySource);
++                densitySource = DensityFunctions.interpolated(gpu);
++            }
 +            io.canvasmc.canvas.gpu.worldgen.GPUSurfacePrecomputer.reportDensityUsed(gpuGrid.length);
 +        } else {
 +            // Canvas - GPU density miss (CPU fallback): gpuGrid null (tryLock fail/off-grid), size mismatch, or blend boundary

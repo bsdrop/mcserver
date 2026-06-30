@@ -103,6 +103,23 @@ public final class GPUSurfacePrecomputer {
     // dispatch (~3136 pts ≫ 512 crossover). Tune with -Dcanvas.gpu.density.tile.
     private static final int DENSITY_TILE = Math.max(1, Math.min(8, Integer.getInteger("canvas.gpu.density.tile", 4)));
     private static final int MAX_DENSITY_CACHE = 100_000; // chunk grids per dimension
+    private static final boolean INTERP_ENABLED = Boolean.getBoolean("canvas.gpu.interp");
+
+    /**
+     * GPU per-block trilinear interpolation of a cell-corner grid (offloads MC's CPU NoiseInterpolator).
+     * Returns the per-block density (layout ((lx*bZ)+lz)*bY+ly) or null → caller keeps the CPU interp path.
+     * Opt-in via -Dcanvas.gpu.interp (the per-block readback is ~80x the corner data, so its net value
+     * depends on transfer/GC vs interp saved — measure before enabling by default).
+     */
+    public static double[] computeInterpolated(RandomState state, double[] corners,
+            int cellWidth, int cellHeight, int cellCountXZ, int cellCountY) {
+        if (!INTERP_ENABLED || corners == null) return null;
+        ContextEntry entry = entries.get(state);
+        if (entry == null || entry.state != CompileState.READY) return null;
+        GPUWorldGenContext ctx = entry.ctx;
+        if (ctx == null || !ctx.hasInterpKernel()) return null;
+        return ctx.computeInterpChunk(corners, cellCountXZ + 1, cellCountXZ + 1, cellCountY + 1, cellWidth, cellHeight);
+    }
 
     /**
      * Returns this chunk's finalDensity cell-corner grid (ordered (ix*nz+iz)*ny+iy, matching
