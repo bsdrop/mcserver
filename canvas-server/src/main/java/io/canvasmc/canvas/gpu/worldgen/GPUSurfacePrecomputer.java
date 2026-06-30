@@ -63,6 +63,8 @@ public final class GPUSurfacePrecomputer {
         // cache collides across dimensions (overworld 1225 vs nether 196) → wrong-size grid → AIOOBE.
         final ConcurrentHashMap<Long, double[]> densityCache = new ConcurrentHashMap<>(16384);
         final ConcurrentHashMap<Long, Boolean> tileInProgress = new ConcurrentHashMap<>();
+        // Per-RandomState surface-height cache (same multi-world/dimension isolation as densityCache).
+        final ConcurrentHashMap<Long, Integer> surfaceCache = new ConcurrentHashMap<>(131072);
 
         ContextEntry() { this.state = CompileState.COMPILING; }
     }
@@ -71,10 +73,9 @@ public final class GPUSurfacePrecomputer {
     private static final ConcurrentHashMap<RandomState, ContextEntry> entries =
         new ConcurrentHashMap<>();
 
-    // Global surface height cache: ColumnPos.asLong(blockX, blockZ) → floor(height)
+    // Surface height cache is per-RandomState (in ContextEntry.surfaceCache) to avoid cross-world/
+    // dimension collisions. ColumnPos.asLong(blockX, blockZ) → floor(height).
     private static final int MAX_CACHE_ENTRIES = 2_000_000;
-    static final ConcurrentHashMap<Long, Integer> SURFACE_CACHE =
-        new ConcurrentHashMap<>(131072);
 
     private GPUSurfacePrecomputer() {}
 
@@ -213,8 +214,8 @@ public final class GPUSurfacePrecomputer {
             return null;
         }
 
-        // Check global cache first (populated by previous nearby dispatches)
-        Long2IntOpenHashMap cached = extractChunkFromCache(chunkX, chunkZ);
+        // Check per-state cache first (populated by previous nearby dispatches)
+        Long2IntOpenHashMap cached = extractChunkFromCache(entry, chunkX, chunkZ);
         if (cached != null) {
             entry.cacheHits.incrementAndGet();
             if (VERBOSE) LOGGER.debug("[GPS] chunk ({},{}) → cache-hit ({} entries)",
@@ -246,8 +247,8 @@ public final class GPUSurfacePrecomputer {
 
         // Cache results for the entire neighborhood
         int areaSz = area.size();
-        if (SURFACE_CACHE.size() < MAX_CACHE_ENTRIES) {
-            area.forEach((key, val) -> SURFACE_CACHE.put((Long) key, val));
+        if (entry.surfaceCache.size() < MAX_CACHE_ENTRIES) {
+            area.forEach((key, val) -> entry.surfaceCache.put((Long) key, val));
         }
 
         Long2IntOpenHashMap result = extractChunkFromMap(area, chunkX, chunkZ);
@@ -257,7 +258,7 @@ public final class GPUSurfacePrecomputer {
             LOGGER.info("[GPS] chunk ({},{}) -> GPU dispatch: {}ms, area={} pts, "
                 + "cache={} entries, avg GPU={}ms, hits={}, fallbacks={}",
                 chunkX, chunkZ, elapsed, areaSz,
-                SURFACE_CACHE.size(), String.format("%.1f", avgMs),
+                entry.surfaceCache.size(), String.format("%.1f", avgMs),
                 entry.cacheHits.get(), entry.cpuFallbacks.get());
         } else if (dispatches == 1 || dispatches % 100 == 0) {
             // Always log the first dispatch and every 100th
@@ -265,7 +266,7 @@ public final class GPUSurfacePrecomputer {
                 + "({}x{} chunk area, cache={} entries)",
                 dispatches, elapsed,
                 PRECOMPUTE_RADIUS*2+1, PRECOMPUTE_RADIUS*2+1,
-                SURFACE_CACHE.size());
+                entry.surfaceCache.size());
         }
 
         return result;
@@ -333,14 +334,14 @@ public final class GPUSurfacePrecomputer {
 
     // ─── Cache helpers ───────────────────────────────────────────────────────────
 
-    /** Returns this chunk's 16 quart-points from the global cache, or null if any miss. */
-    private static Long2IntOpenHashMap extractChunkFromCache(int cx, int cz) {
+    /** Returns this chunk's 16 quart-points from the per-state cache, or null if any miss. */
+    private static Long2IntOpenHashMap extractChunkFromCache(ContextEntry entry, int cx, int cz) {
         int sx = cx * 16, sz = cz * 16;
         Long2IntOpenHashMap map = new Long2IntOpenHashMap(16);
         for (int qz = 0; qz < 4; qz++) {
             for (int qx = 0; qx < 4; qx++) {
                 long key = ColumnPos.asLong(sx + qx*4, sz + qz*4);
-                Integer v = SURFACE_CACHE.get(key);
+                Integer v = entry.surfaceCache.get(key);
                 if (v == null) return null;
                 map.put(key, (int) v);
             }
@@ -377,8 +378,7 @@ public final class GPUSurfacePrecomputer {
     }
 
     public static void clearAllCaches() {
-        SURFACE_CACHE.clear();
-        entries.clear(); // per-entry densityCache/tileInProgress go with the entries
+        entries.clear(); // per-entry surfaceCache/densityCache/tileInProgress go with the entries
     }
 
     /** Print current statistics to log. */
@@ -392,7 +392,7 @@ public final class GPUSurfacePrecomputer {
                     ? entry.gpuTotalMs.get() / entry.gpuDispatches.get() : 0,
                 entry.cacheHits.get(),
                 entry.cpuFallbacks.get(),
-                SURFACE_CACHE.size(),
+                entry.surfaceCache.size(),
                 entry.state);
         });
     }
