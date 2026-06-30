@@ -9,6 +9,8 @@ import io.canvasmc.canvas.configuration.Validator;
 import io.canvasmc.canvas.simd.SIMDDetection;
 import io.canvasmc.canvas.threadedregions.scheduler.AffinitySchedulerThreadPool;
 import io.canvasmc.canvas.util.FasterRandomSource;
+import io.canvasmc.canvas.util.LockedReference;
+import io.canvasmc.canvas.util.TimeSpan;
 import io.canvasmc.canvas.util.Util;
 import io.papermc.paper.ServerBuildInfo;
 import io.papermc.paper.threadedregions.RegionizedServer;
@@ -17,7 +19,6 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
-import java.time.temporal.ChronoUnit;
 import java.util.concurrent.CompletableFuture;
 import java.util.random.RandomGeneratorFactory;
 import net.minecraft.ChatFormatting;
@@ -47,6 +48,7 @@ public class GlobalConfiguration extends Part {
     protected static final int CHAR_LIM = 90;
 
     public static final Logger LOGGER = LoggerFactory.getLogger("CanvasMC");
+    public static final LockedReference<TimeSpan> AUTOSAVE_SPAN = new LockedReference<>(null);
 
     public static final int INFO = 0;
     public static final int WARN = 1;
@@ -136,7 +138,8 @@ public class GlobalConfiguration extends Part {
                 ).endLine()
                 .blank()
                 .wordWrap(
-                    "If you have questions about certain configuration options please reach out in our discord"
+                    "If you have questions about certain configuration options please reach out in our discord. As a",
+                    "general rule, if you don't know what a certain option does, DO NOT TOUCH IT."
                 ).endLine()
                 .literal("https://canvasmc.io/discord")
                 .compile(60)
@@ -207,38 +210,38 @@ public class GlobalConfiguration extends Part {
                 LOGGER.warn("[CanvasGPU] Startup test/benchmark failed: {}", t.getMessage());
             }
             // Canvas end - GPU chunk gen
-        }
 
-        broadcast("Using " + configuration.regionScheduler.defaultTickRate + " as default tick rate", INFO);
+            final Path logsDirectoryPath = Path.of("logs");
 
-        final Path logsDirectoryPath = Path.of("logs");
+            // start log cleaner, only at startup
+            if (configuration.logs.enableLogCleaner && Files.exists(logsDirectoryPath)) {
+                final MutableInt amountRemoved = new MutableInt(0);
 
-        // start log cleaner, only at startup
-        if (configuration.logs.enableLogCleaner && Files.exists(logsDirectoryPath) && !TickRegions.hasStarted()) {
-
-            final Instant now = Instant.now();
-            final Instant adjustedInstantToThresh = now.minus(configuration.logs.length, configuration.logs.unit);
-            final MutableInt amountRemoved = new MutableInt(0);
-
-            Util.removeDirectoryContentsIf(logsDirectoryPath.toFile(), (path) -> {
-                try {
-                    final Instant lastModified = Files.getLastModifiedTime(path).toInstant();
-                    if (lastModified.isBefore(adjustedInstantToThresh) && !path.getFileName().toString().equalsIgnoreCase("latest.log")) {
-                        // the time the log file was modified is before the
-                        // thresh, meaning it is older than the thresh set
-                        amountRemoved.increment();
-                        return true;
+                Util.removeDirectoryContentsIf(logsDirectoryPath.toFile(), (path) -> {
+                    try {
+                        final Instant lastModified = Files.getLastModifiedTime(path).toInstant();
+                        if (lastModified.isBefore(TimeSpan.parse(configuration.logs.cleanerTimeSpan).inPast()) && !path.getFileName().toString().equalsIgnoreCase("latest.log")) {
+                            // the time the log file was modified is before the
+                            // thresh, meaning it is older than the thresh set
+                            amountRemoved.increment();
+                            return true;
+                        }
+                    } catch (final IOException ioe) {
+                        broadcast("Unable to determine if file " + path.getFileName() + " should be removed because: " + ioe.getMessage(), ERROR);
                     }
-                } catch (IOException ioe) {
-                    broadcast("Unable to determine if file " + path.getFileName() + " should be removed because: " + ioe.getMessage(), ERROR);
-                }
-                return false;
-            });
+                    return false;
+                });
 
-            if (amountRemoved.intValue() > 0) {
-                broadcast("Log cleaner removed " + amountRemoved.intValue() + " old log files", INFO);
+                if (amountRemoved.intValue() > 0) {
+                    broadcast("Log cleaner removed " + amountRemoved.intValue() + " old log files", INFO);
+                }
             }
         }
+
+        AUTOSAVE_SPAN.swapValue((_) -> TimeSpan.parse(configuration.autosave.autosaveFrequency));
+
+        broadcast("Server will autosave enabled selection every " + configuration.autosave.autosaveFrequency, INFO);
+        broadcast("Using " + configuration.regionScheduler.defaultTickRate + " as default tick rate", INFO);
     }
 
     public static GlobalConfiguration getInstance() {
@@ -249,7 +252,8 @@ public class GlobalConfiguration extends Part {
         return BUILD_STATUS;
     }
 
-    public static @NonNull RandomSource createFastRandom() {
+    @NonNull
+    public static RandomSource createFastRandom() {
         return ENABLE_FASTER_RANDOM ? new FasterRandomSource(RandomSupport.generateUniqueSeed()) : new SimpleThreadUnsafeRandom(RandomSupport.generateUniqueSeed());
     }
 
@@ -387,7 +391,6 @@ public class GlobalConfiguration extends Part {
     public static class ChunkSystem extends Part {
 
         {
-            option("threadPriority").between(Thread.MIN_PRIORITY, Thread.MAX_PRIORITY);
             option("fluidPostProcessingAlgorithm")
                 .docs(
                     Style.wrap(
@@ -414,8 +417,11 @@ public class GlobalConfiguration extends Part {
             );
         }
 
+        // Kept: local paper-server MoonriseCommon source still reads chunkSystem.threadPriority
+        // (upstream removed its usage via patch, but the generated source isn't regenerated until
+        // applyAllPatches; keeping the field compiles in both states, harmless if unused later).
         public int threadPriority = Thread.NORM_PRIORITY;
-        // Canvas aggressive defaults: FILTERED reduces chunk-gen stutter significantly
+        // Canvas aggressive default: FILTERED reduces chunk-gen stutter (kept over upstream's VANILLA).
         public FluidPostProcessingMode fluidPostProcessingAlgorithm = FluidPostProcessingMode.FILTERED;
 
         public enum FluidPostProcessingMode {
@@ -516,22 +522,6 @@ public class GlobalConfiguration extends Part {
                     "This makes protocol switching asynchronous during login, which reduces global region blocking",
                     "and can improve login and configuration phase performance during player join"
                 );
-
-            option("maximumPacketBytes")
-                .docs(
-                    "The maximum bytes that can be sent by the server in a single packet to a player before kicking them"
-                ).greaterThan(0.0F);
-            option("disablePaperPacketOverflowContainerFix")
-                .docs(
-                    "This disables Papers overflow fallback for large container packets being sent to the client. This means",
-                    "that if the container data is too large, it will kick the player if they attempt to open a container",
-                    "with contents larger than the max packet byte size"
-                );
-            option("packetTooLargeDisconnectReason")
-                .docs(
-                    "The disconnect reason sent to the client when the server attempted to send a packet that",
-                    "exceeded the max packet size"
-                );
         }
 
         // Canvas aggressive defaults: filter redundant packets and async login
@@ -539,7 +529,7 @@ public class GlobalConfiguration extends Part {
         public boolean filterMovePackets = true;
         public boolean alternativePlayerListTick = true;
         public int playerInfoSendInterval = 600;
-        public boolean asyncProtocolSwitch = true;
+        public boolean asyncProtocolSwitch = true; // Canvas aggressive default (over upstream false)
         public int maximumPacketBytes = 8388608;
         public boolean disablePaperPacketOverflowContainerFix = false;
         public String packetTooLargeDisconnectReason = "Clientbound packet exceeded max packet bytes";
@@ -574,7 +564,8 @@ public class GlobalConfiguration extends Part {
     public boolean tileEntitySnapshotCreation = false;
     public String defaultRespawnDimensionKey = Level.OVERWORLD.identifier().toString();
 
-    public static @NonNull ResourceKey<@NonNull Level> fetchRespawnDimensionKey() {
+    @NonNull
+    public static ResourceKey<@NonNull Level> fetchRespawnDimensionKey() {
         return ResourceKey.create(Registries.DIMENSION, Identifier.parse(GlobalConfiguration.getInstance().defaultRespawnDimensionKey));
     }
 
@@ -621,20 +612,19 @@ public class GlobalConfiguration extends Part {
     }
 
     public Logs logs = new Logs();
+
+    @SuppressWarnings("FieldMayBeFinal")
     public static class Logs extends Part {
 
         {
             option("enableLogCleaner").docs("Auto-removes old log files from the \"logs\" directory");
-            option("length").docs("The amount of the time unit until the log file is marked for deletion");
-            option("unit").docs("The type of time unit to use when comparing how old the file is to the current time");
+            option("cleanerTimeSpan").docs("The amount of the time since the log file was last edited until it will be deleted");
             option("logEnderPearlRewriteActions").docs("Logs when a pearl is saved or loaded from Canvas' pearl save rewrite");
         }
 
-        public boolean enableLogCleaner = false;
-        public long length = 30;
-        public ChronoUnit unit = ChronoUnit.DAYS;
-
-        public boolean logEnderPearlRewriteActions = false;
+        private boolean enableLogCleaner = false;
+        private String cleanerTimeSpan = "30d";
+        public boolean logEnderPearlRewriteActions = true;
     }
 
     public EnchantCommand enchantCommand = new EnchantCommand();
@@ -652,4 +642,33 @@ public class GlobalConfiguration extends Part {
     }
 
     public boolean disableLocatorBarInAllWorlds = false;
+
+    {
+        option("autosave").docs(
+            "Folia breaks a lot of autosave features. Canvas restores these,",
+            "and this section allows more specific configuration of autosave functionalities"
+        );
+    }
+
+    public Autosave autosave = new Autosave();
+
+    @SuppressWarnings("FieldMayBeFinal")
+    public static class Autosave extends Part {
+
+        {
+            option("autosaveFrequency").docs("The time frequency of how often to autosave the enabled selection. Default is 5 minutes to match upstream");
+        }
+
+        private String autosaveFrequency = "5m";
+
+        public boolean autosaveScoreboards = true;
+        public boolean autosaveStopwatches = true;
+        public boolean autosavePearls = true;
+        public boolean autosaveCustomBossEvents = true;
+        public boolean autosaveTime = true;
+        public boolean autosaveMaps = true;
+        public boolean autosaveWeather = true;
+        public boolean autosaveGamerules = true;
+        public boolean autosavePlayers = true;
+    }
 }
