@@ -1,0 +1,23 @@
+--- a/net/minecraft/util/CrudeIncrementalIntIdentityHashBiMap.java
++++ b/net/minecraft/util/CrudeIncrementalIntIdentityHashBiMap.java
+@@ -42,7 +_,8 @@
+     }
+ 
+     public static <A> CrudeIncrementalIntIdentityHashBiMap<A> create(final int initialCapacity) {
+-        return new CrudeIncrementalIntIdentityHashBiMap((int)(initialCapacity / 0.8F));
++        // Canvas - round the table to a power of two so hash() can mask instead of modulo (grow() always doubles, so it stays a power of two)
++        return new CrudeIncrementalIntIdentityHashBiMap(Mth.smallestEncompassingPowerOfTwo(Math.max(1, (int)(initialCapacity / 0.8F))));
+     }
+ 
+     @Override
+@@ -128,7 +_,9 @@
+     }
+ 
+     private int hash(final @Nullable K key) {
+-        return (Mth.murmurHash3Mixer(System.identityHashCode(key)) & 2147483647) % this.keys.length;
++        // Canvas - power-of-two table (see create/grow): mask instead of modulo. The mask yields a value in
++        // [0, length-1] so the sign-strip (& 2147483647) the modulo needed is no longer required.
++        return Mth.murmurHash3Mixer(System.identityHashCode(key)) & (this.keys.length - 1);
+     }
+ 
+     private int indexOf(final @Nullable K key, final int startFrom) {
