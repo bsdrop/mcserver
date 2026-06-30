@@ -1,6 +1,6 @@
 --- a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
 +++ b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
-@@ -36,6 +36,8 @@
+@@ -36,6 +_,8 @@
  import java.util.Iterator;
  import java.util.List;
  import java.util.function.Predicate;
@@ -9,7 +9,7 @@
  
  public final class ChunkEntitySlices {
  
-@@ -198,6 +200,12 @@
+@@ -198,6 +_,12 @@
          return this.entities.size() != 0;
      }
  
@@ -22,7 +22,7 @@
      public List<Entity> getAllEntities() {
          final int len = this.entities.size();
          if (len == 0) {
-@@ -476,6 +484,29 @@
+@@ -476,6 +_,29 @@
  
      private static final class EntityCollectionBySection {
  
@@ -52,7 +52,7 @@
          private final ChunkEntitySlices slices;
          private final BasicEntityList<Entity>[] entitiesBySection;
          private int count;
-@@ -530,6 +561,17 @@
+@@ -530,6 +_,17 @@
  
              final BasicEntityList<Entity>[] entitiesBySection = this.entitiesBySection;
  
@@ -70,10 +70,12 @@
              for (int section = min; section <= max; ++section) {
                  final BasicEntityList<Entity> list = entitiesBySection[section - minSection];
  
-@@ -538,8 +580,58 @@
+@@ -538,8 +_,58 @@
                  }
  
                  final Entity[] storage = list.storage;
+-
+-                for (int i = 0, len = Math.min(storage.length, list.size()); i < len; ++i) {
 +                final int len = Math.min(storage.length, list.size());
 +
 +                // Canvas start - SIMD batch AABB filter
@@ -124,8 +126,7 @@
 +                    continue;
 +                }
 +                // Canvas end - SIMD batch AABB filter
- 
--                for (int i = 0, len = Math.min(storage.length, list.size()); i < len; ++i) {
++
 +                for (int i = 0; i < len; ++i) {
                      final Entity entity = storage[i];
  

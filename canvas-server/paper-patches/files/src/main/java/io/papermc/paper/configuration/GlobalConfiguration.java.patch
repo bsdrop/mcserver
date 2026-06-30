@@ -1,6 +1,7 @@
 --- a/src/main/java/io/papermc/paper/configuration/GlobalConfiguration.java
 +++ b/src/main/java/io/papermc/paper/configuration/GlobalConfiguration.java
-@@ -328,7 +_,7 @@
+@@ -327,7 +_,7 @@
+         public boolean useAlternativeLuckFormula = false;
          public boolean useDimensionTypeForCustomSpawners = false;
          public boolean strictAdvancementDimensionCheck = false;
 -        public IntOr.Default compressionLevel = IntOr.Default.USE_DEFAULT;

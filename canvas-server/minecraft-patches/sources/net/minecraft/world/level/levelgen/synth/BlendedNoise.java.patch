@@ -1,0 +1,20 @@
+--- a/net/minecraft/world/level/levelgen/synth/BlendedNoise.java
++++ b/net/minecraft/world/level/levelgen/synth/BlendedNoise.java
+@@ -144,6 +_,17 @@
+         return Mth.clampedLerp(factor, blendMin / 512.0, blendMax / 512.0) / 128.0;
+     }
+ 
++    // Canvas start - GPU worldgen: accessors for bit-exact OpenCL compilation of BlendedNoise
++    public PerlinNoise canvas$minLimitNoise() { return this.minLimitNoise; }
++    public PerlinNoise canvas$maxLimitNoise() { return this.maxLimitNoise; }
++    public PerlinNoise canvas$mainNoise() { return this.mainNoise; }
++    public double canvas$xzMultiplier() { return this.xzMultiplier; }
++    public double canvas$yMultiplier() { return this.yMultiplier; }
++    public double canvas$xzFactor() { return this.xzFactor; }
++    public double canvas$yFactor() { return this.yFactor; }
++    public double canvas$smearScaleMultiplier() { return this.smearScaleMultiplier; }
++    // Canvas end - GPU worldgen
++
+     @Override
+     public double minValue() {
+         return -this.maxValue();

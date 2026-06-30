@@ -1,0 +1,37 @@
+--- a/net/minecraft/world/level/levelgen/NoiseBasedChunkGenerator.java
++++ b/net/minecraft/world/level/levelgen/NoiseBasedChunkGenerator.java
+@@ -360,6 +_,9 @@
+         int minY = noiseSettings.minY();
+         int cellYMin = Mth.floorDiv(minY, noiseSettings.getCellHeight());
+         int cellCountY = Mth.floorDiv(noiseSettings.height(), noiseSettings.getCellHeight());
++        // Canvas start - GPU chunk gen: track queue depth for GPU load balancing
++        io.canvasmc.canvas.gpu.GPUChunkGenQueue.onChunkQueued();
++        // Canvas end - GPU chunk gen
+         return cellCountY <= 0 ? CompletableFuture.completedFuture(centerChunk) : CompletableFuture.supplyAsync(() -> {
+             int topSectionIndex = centerChunk.getSectionIndex(cellCountY * noiseSettings.getCellHeight() - 1 + minY);
+             int bottomSectionIndex = centerChunk.getSectionIndex(minY);
+@@ -377,6 +_,9 @@
+                 for (LevelChunkSection section : sections) {
+                     section.release();
+                 }
++                // Canvas start - GPU chunk gen: dequeue after completion
++                io.canvasmc.canvas.gpu.GPUChunkGenQueue.onChunkDequeued();
++                // Canvas end - GPU chunk gen
+             }
+         }, Runnable::run); // Paper - rewrite chunk system
+     }
+@@ -395,6 +_,14 @@
+         ChunkPos chunkPos = centerChunk.getPos();
+         int chunkStartBlockX = chunkPos.getMinBlockX();
+         int chunkStartBlockZ = chunkPos.getMinBlockZ();
++        // Canvas start - GPU surface precompute (bit-exact gated): precompute() triggers async
++        // compile + CPU-vs-GPU bit-exact verification; only injects when verified AND enabled
++        // (-Dcanvas.gpu.surface.enabled=true). Verify-only by default: logs PASS/FAIL, stays CPU.
++        it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap gpuSurface =
++            io.canvasmc.canvas.gpu.worldgen.GPUSurfacePrecomputer.precompute(
++                randomState, chunkPos.x(), chunkPos.z());
++        if (gpuSurface != null) noiseChunk.canvas$prePopulateSurfaceCache(gpuSurface);
++        // Canvas end - GPU surface precompute
+         Aquifer aquifer = noiseChunk.aquifer();
+         noiseChunk.initializeForFirstCellX();
+         BlockPos.MutableBlockPos blockPos = new BlockPos.MutableBlockPos();

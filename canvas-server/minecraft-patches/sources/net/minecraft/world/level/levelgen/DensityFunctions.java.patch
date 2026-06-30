@@ -1,0 +1,106 @@
+--- a/net/minecraft/world/level/levelgen/DensityFunctions.java
++++ b/net/minecraft/world/level/levelgen/DensityFunctions.java
+@@ -32,6 +_,30 @@
+ import org.slf4j.Logger;
+ 
+ public final class DensityFunctions {
++    // Canvas GPU: public interfaces exposing private record internals for GPU compiler
++
++    public interface CanvasRangeChoiceDF extends DensityFunction {
++        DensityFunction canvas$rcInput();
++        double canvas$rcMin();
++        double canvas$rcMax();
++        DensityFunction canvas$rcWhenIn();
++        DensityFunction canvas$rcWhenOut();
++    }
++
++    public interface CanvasYClampedGradientDF extends DensityFunction {
++        int canvas$ycgFromY();
++        int canvas$ycgToY();
++        double canvas$ycgFromValue();
++        double canvas$ycgToValue();
++    }
++
++    public interface CanvasFindTopSurfaceDF extends DensityFunction {
++        DensityFunction canvas$ftsInnerDensity();
++        DensityFunction canvas$ftsUpperBound();
++        int canvas$ftsLowerBound();
++        int canvas$ftsCellHeight();
++    }
++
+     private static final Codec<DensityFunction> CODEC = BuiltInRegistries.DENSITY_FUNCTION_TYPE
+         .byNameCodec()
+         .dispatch(function -> function.codec().codec(), Function.identity());
+@@ -579,7 +_,11 @@
+         }
+     }
+ 
+-    private record FindTopSurface(DensityFunction density, DensityFunction upperBound, int lowerBound, int cellHeight) implements DensityFunction {
++    private record FindTopSurface(DensityFunction density, DensityFunction upperBound, int lowerBound, int cellHeight) implements DensityFunction, DensityFunctions.CanvasFindTopSurfaceDF {
++        @Override public DensityFunction canvas$ftsInnerDensity() { return this.density; }
++        @Override public DensityFunction canvas$ftsUpperBound() { return this.upperBound; }
++        @Override public int canvas$ftsLowerBound() { return this.lowerBound; }
++        @Override public int canvas$ftsCellHeight() { return this.cellHeight; }
+         private static final MapCodec<DensityFunctions.FindTopSurface> DATA_CODEC = RecordCodecBuilder.mapCodec(
+             i -> i.group(
+                     DensityFunction.CODEC.fieldOf("density").forGetter(DensityFunctions.FindTopSurface::density),
+@@ -668,7 +_,7 @@
+         }
+     }
+ 
+-    private record IntervalSelect(DensityFunction input, DoubleList thresholds, List<DensityFunction> functions) implements DensityFunction {
++    record IntervalSelect(DensityFunction input, DoubleList thresholds, List<DensityFunction> functions) implements DensityFunction { // Canvas - GPU worldgen: package-private for DFCLCompiler access
+         private static final Codec<DoubleList> THRESHOLDS_CODEC = DensityFunctions.NOISE_VALUE_CODEC.listOf().xmap(DoubleArrayList::new, Function.identity());
+         public static final MapCodec<DensityFunctions.IntervalSelect> DATA_CODEC = RecordCodecBuilder.<DensityFunctions.IntervalSelect>mapCodec(
+                 i -> i.group(
+@@ -962,6 +_,23 @@
+ 
+         @Override
+         public void fillArray(final double[] output, final DensityFunction.ContextProvider contextProvider) {
++            // Canvas start - GPU noise: dispatch to GPU when chunk queue is deep enough
++            net.minecraft.world.level.levelgen.synth.NormalNoise nn =
++                (this.noise.noise() instanceof net.minecraft.world.level.levelgen.synth.NormalNoise n) ? n : null;
++            if (nn != null
++                && output.length >= io.canvasmc.canvas.gpu.GPUNoiseAccelerator.MIN_GPU_N
++                && io.canvasmc.canvas.gpu.GPUChunkGenQueue.shouldUseGPU()) {
++                try {
++                    io.canvasmc.canvas.gpu.GPUNoiseAccelerator.fillNormalNoise(
++                        output, contextProvider, nn, this.xzScale, this.yScale);
++                    io.canvasmc.canvas.gpu.GPUChunkGenQueue.recordGPUBatch(output.length, 0);
++                    return;
++                } catch (Throwable t) {
++                    io.canvasmc.canvas.gpu.GPUNoiseAccelerator.disableOnError("DensityFunctions.Noise.fillArray", t);
++                    io.canvasmc.canvas.gpu.GPUChunkGenQueue.recordCPUFallback();
++                }
++            }
++            // Canvas end - GPU noise
+             contextProvider.fillAllDirectly(output, this);
+         }
+ 
+@@ -1007,7 +_,12 @@
+     }
+ 
+     private record RangeChoice(DensityFunction input, double minInclusive, double maxExclusive, DensityFunction whenInRange, DensityFunction whenOutOfRange)
+-        implements DensityFunction {
++        implements DensityFunction, DensityFunctions.CanvasRangeChoiceDF {
++        @Override public DensityFunction canvas$rcInput() { return this.input; }
++        @Override public double canvas$rcMin() { return this.minInclusive; }
++        @Override public double canvas$rcMax() { return this.maxExclusive; }
++        @Override public DensityFunction canvas$rcWhenIn() { return this.whenInRange; }
++        @Override public DensityFunction canvas$rcWhenOut() { return this.whenOutOfRange; }
+         public static final MapCodec<DensityFunctions.RangeChoice> DATA_CODEC = RecordCodecBuilder.mapCodec(
+             i -> i.group(
+                     DensityFunction.CODEC.fieldOf("input").forGetter(DensityFunctions.RangeChoice::input),
+@@ -1401,7 +_,11 @@
+         }
+     }
+ 
+-    private record YClampedGradient(int fromY, int toY, double fromValue, double toValue) implements DensityFunction.SimpleFunction {
++    private record YClampedGradient(int fromY, int toY, double fromValue, double toValue) implements DensityFunction.SimpleFunction, DensityFunctions.CanvasYClampedGradientDF {
++        @Override public int canvas$ycgFromY() { return this.fromY; }
++        @Override public int canvas$ycgToY() { return this.toY; }
++        @Override public double canvas$ycgFromValue() { return this.fromValue; }
++        @Override public double canvas$ycgToValue() { return this.toValue; }
+         private static final MapCodec<DensityFunctions.YClampedGradient> DATA_CODEC = RecordCodecBuilder.mapCodec(
+             i -> i.group(
+                     Codec.intRange(DimensionType.MIN_Y * 2, DimensionType.MAX_Y * 2).fieldOf("from_y").forGetter(DensityFunctions.YClampedGradient::fromY),

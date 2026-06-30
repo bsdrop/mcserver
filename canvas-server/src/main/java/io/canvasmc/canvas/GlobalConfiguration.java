@@ -195,6 +195,18 @@ public class GlobalConfiguration extends Part {
                 LOGGER.warn("If you have already added this flag, then SIMD operations are not supported on your JVM or CPU.");
                 LOGGER.warn("Debug: Java: {}, test run: {}", System.getProperty("java.version"), SIMDDetection.testRun);
             }
+
+            // Canvas start - GPU chunk gen: startup test + benchmark
+            try {
+                io.canvasmc.canvas.gpu.GPUNoiseAccelerator.runStartupTest();
+                if (io.canvasmc.canvas.gpu.GPUNoiseAccelerator.isAvailable()) {
+                    String benchResult = io.canvasmc.canvas.gpu.GPUNoiseAccelerator.runBenchmark();
+                    for (String line : benchResult.split("\n")) LOGGER.info(line);
+                }
+            } catch (Throwable t) {
+                LOGGER.warn("[CanvasGPU] Startup test/benchmark failed: {}", t.getMessage());
+            }
+            // Canvas end - GPU chunk gen
         }
 
         broadcast("Using " + configuration.regionScheduler.defaultTickRate + " as default tick rate", INFO);

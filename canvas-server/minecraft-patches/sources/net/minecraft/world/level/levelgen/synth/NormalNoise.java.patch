@@ -1,0 +1,16 @@
+--- a/net/minecraft/world/level/levelgen/synth/NormalNoise.java
++++ b/net/minecraft/world/level/levelgen/synth/NormalNoise.java
+@@ -83,6 +_,13 @@
+         return this.parameters;
+     }
+ 
++    // Canvas start - GPU noise: accessors for GPU batch dispatch
++    public PerlinNoise canvas$getFirst() { return this.first; }
++    public PerlinNoise canvas$getSecond() { return this.second; }
++    public double canvas$getValueFactor() { return this.valueFactor; }
++    public static double canvas$getInputFactor() { return INPUT_FACTOR; }
++    // Canvas end - GPU noise
++
+     @VisibleForTesting
+     public void parityConfigString(final StringBuilder sb) {
+         sb.append("NormalNoise {");

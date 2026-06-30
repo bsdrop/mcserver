@@ -1,5 +1,57 @@
 --- a/net/minecraft/world/level/levelgen/NoiseChunk.java
 +++ b/net/minecraft/world/level/levelgen/NoiseChunk.java
+@@ -153,10 +_,38 @@
+         }
+ 
+         List<NoiseChunk.BlockStateFiller> builder = new ArrayList<>();
++        // Canvas start - GPU full-chunk density (Task #6): compute finalDensity at cell corners on GPU
++        // (bit-exact verified) and feed it into MC's own interpolation via interpolated(gpuGrid).
++        // Correct-by-construction; off-grid + not-ready + GPU-busy all fall back to CPU.
++        DensityFunction densitySource = wrappedRouter.finalDensity();
++        double[] gpuGrid = io.canvasmc.canvas.gpu.worldgen.GPUSurfacePrecomputer.computeDensityGrid(
++            randomState, chunkMinBlockX, chunkMinBlockZ, this.cellWidth, this.cellHeight,
++            cellCountXZ, this.cellCountY, this.cellNoiseMinY);
++        if (gpuGrid != null) {
++            // Per-chunk bit-exact gate: verify GPU grid corners vs CPU finalDensity. A grid-indexing
++            // bug would silently corrupt terrain, so spot-check 3 corners; mismatch → keep CPU.
++            int nzc = cellCountXZ + 1, nyc = this.cellCountY + 1;
++            int[][] chk = {{0,0,0},{cellCountXZ,cellCountXZ,this.cellCountY},{cellCountXZ/2,cellCountXZ/2,this.cellCountY/2}};
++            boolean ok = true;
++            for (int[] s : chk) {
++                double cpu = densitySource.compute(new DensityFunction.SinglePointContext(
++                    chunkMinBlockX + s[0]*this.cellWidth, (this.cellNoiseMinY + s[2])*this.cellHeight, chunkMinBlockZ + s[1]*this.cellWidth));
++                double g = gpuGrid[(s[0]*nzc + s[1])*nyc + s[2]];
++                if (Double.doubleToRawLongBits(cpu) != Double.doubleToRawLongBits(g)) { ok = false; break; }
++            }
++            io.canvasmc.canvas.gpu.worldgen.GPUSurfacePrecomputer.reportDensityGate(ok, gpuGrid.length);
++            if (ok) {
++                GpuGridDensity gpu = new GpuGridDensity(gpuGrid, chunkMinBlockX, chunkMinBlockZ,
++                    this.cellWidth, this.cellHeight, cellCountXZ + 1, cellCountXZ + 1, this.cellCountY + 1,
++                    this.cellNoiseMinY, densitySource);
++                densitySource = DensityFunctions.interpolated(gpu);
++            }
++        }
+         DensityFunction fullNoiseValue = DensityFunctions.cacheAllInCell(
+-                DensityFunctions.add(wrappedRouter.finalDensity(), DensityFunctions.BeardifierMarker.INSTANCE)
++                DensityFunctions.add(densitySource, DensityFunctions.BeardifierMarker.INSTANCE)
+             )
+             .mapAll(this::wrap);
++        // Canvas end - GPU full-chunk density
+         this.fullNoiseDensity = fullNoiseValue;
+         builder.add(context -> this.aquifer.computeSubstance(context, fullNoiseValue.compute(context)));
+         if (settings.oreVeinsEnabled()) {
+@@ -228,6 +_,11 @@
+         return Mth.floor(this.preliminarySurfaceLevel.compute(new DensityFunction.SinglePointContext(blockX, 0, blockZ)));
+     }
+ 
++    /** Canvas GPU: pre-populate surface height cache from GPU precomputation results. */
++    public void canvas$prePopulateSurfaceCache(it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap entries) {
++        this.preliminarySurfaceLevelCache.putAll(entries);
++    }
++
+     private void fillSlice(final boolean slice0, final int cellX) {
+         this.cellStartBlockX = cellX * this.cellWidth;
+         this.inCellX = 0;
 @@ -373,7 +_,17 @@
      }
  

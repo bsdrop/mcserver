@@ -1,0 +1,63 @@
+--- /dev/null
++++ b/net/minecraft/world/level/levelgen/GpuGridDensity.java
+@@ -1,0 +_,60 @@
++package net.minecraft.world.level.levelgen;
++
++/**
++ * Canvas GPU worldgen: a DensityFunction backed by a precomputed cell-corner grid of the
++ * (unwrapped) finalDensity, computed on the GPU bit-exactly (verified 8192/8192 vs CPU).
++ *
++ * Correct-by-construction: NoiseChunk wraps this in an Interpolated marker → NoiseInterpolator
++ * samples it only at cell corners → returns the GPU grid values → MC's own trilinear
++ * interpolation + aquifer proceed unchanged → block-for-block identical to CPU generation.
++ * Any off-corner query (shouldn't happen on the interpolated path) falls back to CPU compute.
++ */
++public final class GpuGridDensity implements DensityFunction.SimpleFunction {
++    private final double[] grid;       // flattened [(ix*nz + iz)*ny + iy]
++    private final int originX, originZ;
++    private final int cellWidth, cellHeight;
++    private final int nx, nz, ny;      // corner counts per axis (cellCountXZ+1, .., cellCountY+1)
++    private final int cellNoiseMinY;
++    private final DensityFunction fallback;
++
++    public GpuGridDensity(double[] grid, int originX, int originZ, int cellWidth, int cellHeight,
++                          int nx, int nz, int ny, int cellNoiseMinY, DensityFunction fallback) {
++        this.grid = grid;
++        this.originX = originX; this.originZ = originZ;
++        this.cellWidth = cellWidth; this.cellHeight = cellHeight;
++        this.nx = nx; this.nz = nz; this.ny = ny;
++        this.cellNoiseMinY = cellNoiseMinY;
++        this.fallback = fallback;
++    }
++
++    @Override
++    public double compute(final DensityFunction.FunctionContext context) {
++        int rx = context.blockX() - this.originX;
++        int rz = context.blockZ() - this.originZ;
++        int by = context.blockY();
++        if (rx >= 0 && rz >= 0 && (rx % this.cellWidth) == 0 && (rz % this.cellWidth) == 0
++                && Math.floorMod(by, this.cellHeight) == 0) {
++            int ix = rx / this.cellWidth;
++            int iz = rz / this.cellWidth;
++            int iy = Math.floorDiv(by, this.cellHeight) - this.cellNoiseMinY;
++            if (ix >= 0 && ix < this.nx && iz >= 0 && iz < this.nz && iy >= 0 && iy < this.ny) {
++                return this.grid[(ix * this.nz + iz) * this.ny + iy];
++            }
++        }
++        return this.fallback.compute(context); // off-grid safety fallback (CPU)
++    }
++
++    @Override
++    public void fillArray(final double[] output, final DensityFunction.ContextProvider contextProvider) {
++        contextProvider.fillAllDirectly(output, this);
++    }
++
++    @Override public double minValue() { return this.fallback.minValue(); }
++    @Override public double maxValue() { return this.fallback.maxValue(); }
++
++    @Override
++    public net.minecraft.util.KeyDispatchDataCodec<? extends DensityFunction> codec() {
++        // Never serialized (transient per-chunk runtime function).
++        throw new UnsupportedOperationException("GpuGridDensity is not serializable");
++    }
++}

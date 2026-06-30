@@ -1,0 +1,25 @@
+--- a/net/minecraft/world/level/chunk/storage/RegionFileVersion.java
++++ b/net/minecraft/world/level/chunk/storage/RegionFileVersion.java
+@@ -13,6 +_,8 @@
+ import java.util.zip.GZIPInputStream;
+ import java.util.zip.GZIPOutputStream;
+ import java.util.zip.InflaterInputStream;
++import com.github.luben.zstd.ZstdInputStream;
++import com.github.luben.zstd.ZstdOutputStream;
+ import net.jpountz.lz4.LZ4BlockInputStream;
+ import net.jpountz.lz4.LZ4BlockOutputStream;
+ import net.minecraft.util.FastBufferedInputStream;
+@@ -35,6 +_,13 @@
+     public static final RegionFileVersion VERSION_LZ4 = register(
+         new RegionFileVersion(
+             4, "lz4", in -> new FastBufferedInputStream(new LZ4BlockInputStream(in)), out -> new BufferedOutputStream(new LZ4BlockOutputStream(out))
++        )
++    );
++    public static final RegionFileVersion VERSION_ZSTD = register( // Canvas - zstd region compression
++        new RegionFileVersion(
++            5, "zstd",
++            in -> new FastBufferedInputStream(new ZstdInputStream(in)),
++            out -> new BufferedOutputStream(new ZstdOutputStream(out))
+         )
+     );
+     public static final RegionFileVersion VERSION_CUSTOM = register(new RegionFileVersion(127, null, in -> {

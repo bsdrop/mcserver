@@ -1,0 +1,719 @@
+--- /dev/null
++++ b/net/minecraft/world/level/levelgen/DFCLCompiler.java
+@@ -1,0 +_,716 @@
++package net.minecraft.world.level.levelgen;
++
++import it.unimi.dsi.fastutil.objects.Reference2IntOpenHashMap;
++import java.util.ArrayList;
++import java.util.List;
++import net.minecraft.util.CubicSpline;
++import net.minecraft.world.level.levelgen.synth.BlendedNoise;
++import net.minecraft.world.level.levelgen.synth.ImprovedNoise;
++import net.minecraft.world.level.levelgen.synth.NormalNoise;
++import net.minecraft.world.level.levelgen.synth.PerlinNoise;
++import org.slf4j.Logger;
++import org.slf4j.LoggerFactory;
++
++/**
++ * Compiles a DensityFunction tree into an OpenCL C source string.
++ *
++ * All emitted functions have the 3D signature:
++ *   double df_N(double bx, double blockY, double bz)
++ *
++ * emitDF() returns the FUNCTION NAME only (no parens/args).
++ * Use c3(fn) to build a standard call expression df_N(bx,blockY,bz).
++ *
++ * FindTopSurface at root: emits a Y-scan kernel loop.
++ */
++public final class DFCLCompiler {
++
++    private static final Logger LOGGER = LoggerFactory.getLogger("CanvasGPU-Compiler");
++
++    private final StringBuilder src = new StringBuilder();
++    private final Reference2IntOpenHashMap<Object> ids = new Reference2IntOpenHashMap<>();
++    private final java.util.IdentityHashMap<NormalNoise, String> emittedNNIds = new java.util.IdentityHashMap<>();
++    private int counter = 0;
++    private String failReason = null;
++
++    private static final DensityFunction.FunctionContext ZERO_CTX =
++        new DensityFunction.SinglePointContext(0, 0, 0);
++
++    /** Standard 3D call with variables bx, blockY, bz. */
++    private static String c3(String fn) { return fn + "(bx,blockY,bz)"; }
++    /** Call with custom Y expression. */
++    private static String cY(String fn, String y) { return fn + "(bx," + y + ",bz)"; }
++
++    // ─── Entry point ─────────────────────────────────────────────────────────────
++
++    public static String compile(DensityFunction df) {
++        try {
++            DFCLCompiler c = new DFCLCompiler();
++            c.emitPrologue();
++            DensityFunction root = c.unwrap(df);
++            c.emitRoot(root);
++            if (c.failReason != null) {
++                LOGGER.warn("[CanvasGPU] DFCLCompiler: cannot compile — {}", c.failReason);
++                return null;
++            }
++            return c.src.toString();
++        } catch (Exception e) {
++            LOGGER.warn("[CanvasGPU] DFCLCompiler threw exception", e);
++            return null;
++        }
++    }
++
++    /**
++     * Compiles a DF into a kernel `compute_value` that outputs the raw double df(bx,blockY,bz)
++     * for each (x,y,z) point (positions[id*3..+2] as ints). Used to verify arbitrary DFs
++     * (e.g. finalDensity) bit-exact against CPU at full 3D points. Returns null on unsupported nodes.
++     */
++    public static String compileValue(DensityFunction df) {
++        try {
++            DFCLCompiler c = new DFCLCompiler();
++            c.emitPrologue();
++            DensityFunction root = c.unwrap(df);
++            String fn = c.emitDF(root);
++            if (c.failReason != null) {
++                LOGGER.warn("[CanvasGPU] DFCLCompiler.compileValue: cannot compile — {}", c.failReason);
++                logNodeClasses(df);
++                return null;
++            }
++            c.src.append("__kernel void compute_value(__global const int* pos, __global double* out, const int N) {\n");
++            c.src.append("    int id = get_global_id(0); if (id >= N) return;\n");
++            c.src.append("    double bx=(double)pos[id*3], blockY=(double)pos[id*3+1], bz=(double)pos[id*3+2];\n");
++            c.src.append("    out[id] = ").append(c3(fn)).append(";\n}\n");
++            return c.src.toString();
++        } catch (Exception e) {
++            LOGGER.warn("[CanvasGPU] DFCLCompiler.compileValue threw", e);
++            return null;
++        }
++    }
++
++    // ─── Prologue ────────────────────────────────────────────────────────────────
++
++    private void emitPrologue() {
++        // NOTE: bit-exact with Canvas ImprovedNoise.sampleAndLerp (FMA structure) — verified in
++        // gpu_verify harness (200k pts, maxULP=0). Build MUST use -cl-fp32-correctly-rounded-divide-sqrt.
++        src.append("""
++            /* Canvas GPU Surface Precomputer — generated OpenCL C (fma bit-exact) */
++            #pragma OPENCL EXTENSION cl_khr_fp64 : enable
++            #pragma OPENCL FP_CONTRACT OFF
++
++            __constant double FSG[64] = {
++             1,1,0,0, -1,1,0,0, 1,-1,0,0, -1,-1,0,0, 1,0,1,0, -1,0,1,0, 1,0,-1,0, -1,0,-1,0,
++             0,1,1,0, 0,-1,1,0, 0,1,-1,0, 0,-1,-1,0, 1,1,0,0, 0,-1,1,0, -1,1,0,0, 0,-1,-1,0};
++
++            // Mth.clamp(double) = value<min?min:Math.min(value,max); Math.min finite = v<=max?v:max
++            inline double mc_clamp(double v, double mn, double mx) { return v<mn?mn:(v<=mx?v:mx); }
++            inline double mc_min(double a, double b) { return a<=b?a:b; }
++            inline double mc_max(double a, double b) { return a>=b?a:b; }
++            // PerlinNoise.wrap
++            inline double mc_wrap(double x) { return x - (double)((long)floor(x/3.3554432e7+0.5))*3.3554432e7; }
++
++            // ImprovedNoise.noise (yScale=0): bit-exact FMA sampleAndLerp
++            double mc_perlin(__constant int* p, double _x, double _y, double _z,
++                             double xo, double yo, double zo) {
++                double x=_x+xo, y=_y+yo, z=_z+zo;
++                double xf=floor(x), yf=floor(y), zf=floor(z);
++                double xr=x-xf, yr=y-yf, zr=z-zf;
++                int xi=(int)xf&0xFF, yi=(int)yf&0xFF, zi=(int)zf&0xFF;
++                int v2=p[xi]&0xFF, v3=p[(xi+1)&0xFF]&0xFF;
++                int v4=(v2+yi)&0xFF, v5=(v3+yi)&0xFF, v6=(v2+yi+1)&0xFF, v7=(v3+yi+1)&0xFF;
++                int v8=p[v4]&0xFF, v9=p[v5]&0xFF, v10=p[v6]&0xFF, v11=p[v7]&0xFF;
++                int a12=(v8+zi)&0xFF, a13=(v9+zi)&0xFF, a14=(v10+zi)&0xFF, a15=(v11+zi)&0xFF;
++                int a16=(v8+zi+1)&0xFF, a17=(v9+zi+1)&0xFF, a18=(v10+zi+1)&0xFF, a19=(v11+zi+1)&0xFF;
++                int g20=(p[a12]&15)<<2, g21=(p[a13]&15)<<2, g22=(p[a14]&15)<<2, g23=(p[a15]&15)<<2;
++                int g24=(p[a16]&15)<<2, g25=(p[a17]&15)<<2, g26=(p[a18]&15)<<2, g27=(p[a19]&15)<<2;
++                double x1=xr-1.0, y1=yr-1.0, z1=zr-1.0;
++                double n87=fma(FSG[g20],xr,fma(FSG[g20|1],yr,FSG[g20|2]*zr));
++                double n88=fma(FSG[g21],x1,fma(FSG[g21|1],yr,FSG[g21|2]*zr));
++                double n89=fma(FSG[g22],xr,fma(FSG[g22|1],y1,FSG[g22|2]*zr));
++                double n90=fma(FSG[g23],x1,fma(FSG[g23|1],y1,FSG[g23|2]*zr));
++                double n91=fma(FSG[g24],xr,fma(FSG[g24|1],yr,FSG[g24|2]*z1));
++                double n92=fma(FSG[g25],x1,fma(FSG[g25|1],yr,FSG[g25|2]*z1));
++                double n93=fma(FSG[g26],xr,fma(FSG[g26|1],y1,FSG[g26|2]*z1));
++                double n94=fma(FSG[g27],x1,fma(FSG[g27|1],y1,FSG[g27|2]*z1));
++                double s95=fma(xr,6.0,-15.0), s96=fma(yr,6.0,-15.0), s97=fma(zr,6.0,-15.0);
++                double s98=fma(xr,s95,10.0), s99=fma(yr,s96,10.0), s100=fma(zr,s97,10.0);
++                double f101=xr*xr*xr*s98, f102=yr*yr*yr*s99, f103=zr*zr*zr*s100;
++                double l113=fma(f101,n88-n87,n87), l114=fma(f101,n94-n93,n93);
++                double l115=fma(f101,n92-n91,n91), l116=fma(f101,n90-n89,n89);
++                double l120=fma(f102,l116-l113,l113), l121=fma(f102,l114-l115,l115);
++                return fma(f103,l121-l120,l120);
++            }
++
++            // ImprovedNoise.noise(x,y,z,yScale,yFudge): gradient-y uses yg=yr-yrFudge, fade-y uses yr.
++            double mc_perlin5(__constant int* p, double _x, double _y, double _z,
++                              double xo, double yo, double zo, double yScale, double yFudge) {
++                double x=_x+xo, y=_y+yo, z=_z+zo;
++                double xf=floor(x), yf=floor(y), zf=floor(z);
++                double xr=x-xf, yr=y-yf, zr=z-zf;
++                double yrF;
++                if (yScale != 0.0) { double fl=(yFudge>=0.0 && yFudge<yr)?yFudge:yr; yrF=floor(fl/yScale+1.0E-7f)*yScale; }
++                else yrF=0.0;
++                double yg=yr-yrF;
++                int xi=(int)xf&0xFF, yi=(int)yf&0xFF, zi=(int)zf&0xFF;
++                int v2=p[xi]&0xFF, v3=p[(xi+1)&0xFF]&0xFF;
++                int v4=(v2+yi)&0xFF, v5=(v3+yi)&0xFF, v6=(v2+yi+1)&0xFF, v7=(v3+yi+1)&0xFF;
++                int v8=p[v4]&0xFF, v9=p[v5]&0xFF, v10=p[v6]&0xFF, v11=p[v7]&0xFF;
++                int a12=(v8+zi)&0xFF, a13=(v9+zi)&0xFF, a14=(v10+zi)&0xFF, a15=(v11+zi)&0xFF;
++                int a16=(v8+zi+1)&0xFF, a17=(v9+zi+1)&0xFF, a18=(v10+zi+1)&0xFF, a19=(v11+zi+1)&0xFF;
++                int g20=(p[a12]&15)<<2, g21=(p[a13]&15)<<2, g22=(p[a14]&15)<<2, g23=(p[a15]&15)<<2;
++                int g24=(p[a16]&15)<<2, g25=(p[a17]&15)<<2, g26=(p[a18]&15)<<2, g27=(p[a19]&15)<<2;
++                double x1=xr-1.0, y1=yg-1.0, z1=zr-1.0;
++                double n87=fma(FSG[g20],xr,fma(FSG[g20|1],yg,FSG[g20|2]*zr));
++                double n88=fma(FSG[g21],x1,fma(FSG[g21|1],yg,FSG[g21|2]*zr));
++                double n89=fma(FSG[g22],xr,fma(FSG[g22|1],y1,FSG[g22|2]*zr));
++                double n90=fma(FSG[g23],x1,fma(FSG[g23|1],y1,FSG[g23|2]*zr));
++                double n91=fma(FSG[g24],xr,fma(FSG[g24|1],yg,FSG[g24|2]*z1));
++                double n92=fma(FSG[g25],x1,fma(FSG[g25|1],yg,FSG[g25|2]*z1));
++                double n93=fma(FSG[g26],xr,fma(FSG[g26|1],y1,FSG[g26|2]*z1));
++                double n94=fma(FSG[g27],x1,fma(FSG[g27|1],y1,FSG[g27|2]*z1));
++                double s95=fma(xr,6.0,-15.0), s96=fma(yr,6.0,-15.0), s97=fma(zr,6.0,-15.0);
++                double s98=fma(xr,s95,10.0), s99=fma(yr,s96,10.0), s100=fma(zr,s97,10.0);
++                double f101=xr*xr*xr*s98, f102=yr*yr*yr*s99, f103=zr*zr*zr*s100;
++                double l113=fma(f101,n88-n87,n87), l114=fma(f101,n94-n93,n93);
++                double l115=fma(f101,n92-n91,n91), l116=fma(f101,n90-n89,n89);
++                double l120=fma(f102,l116-l113,l113), l121=fma(f102,l114-l115,l115);
++                return fma(f103,l121-l120,l120);
++            }
++            inline double mc_clampedLerp(double f, double mn, double mx) { return f<0.0?mn:(f>1.0?mx:(mn+f*(mx-mn))); }
++            """);
++    }
++
++    // ─── Root emitter ────────────────────────────────────────────────────────────
++
++    private void emitRoot(DensityFunction df) {
++        if (df instanceof DensityFunctions.CanvasFindTopSurfaceDF fts) {
++            String densityFn  = emitDF(fts.canvas$ftsInnerDensity());
++            String upperBndFn = emitDF(fts.canvas$ftsUpperBound());
++            if (failReason != null) return;
++            int lb = fts.canvas$ftsLowerBound(), ch = fts.canvas$ftsCellHeight();
++            src.append("__kernel void compute_surface(\n");
++            src.append("    __global const int* positions,\n");
++            src.append("    __global int* results,\n");
++            src.append("    const int N\n) {\n");
++            src.append("    int id = get_global_id(0);\n");
++            src.append("    if (id >= N) return;\n");
++            src.append("    double bx = (double)positions[id*2  ];\n");
++            src.append("    double bz = (double)positions[id*2+1];\n");
++            // upperBound at Y=0 (typically Y-independent spline)
++            src.append("    double topYf = ").append(cY(upperBndFn, "0.0")).append(";\n");
++            src.append("    int topY = (int)floor(topYf / ").append(ch).append(".0) * ").append(ch).append(";\n");
++            src.append("    if (topY <= ").append(lb).append(") { results[id] = ").append(lb).append("; return; }\n");
++            src.append("    int result = ").append(lb).append(";\n");
++            src.append("    for (int blockY = topY; blockY >= ").append(lb)
++               .append("; blockY -= ").append(ch).append(") {\n");
++            src.append("        if (").append(cY(densityFn, "(double)blockY")).append(" > 0.0) {\n");
++            src.append("            result = blockY; break;\n        }\n    }\n");
++            src.append("    results[id] = result;\n}\n");
++        } else {
++            String rootFn = emitDF(df);
++            if (failReason != null) return;
++            src.append("""
++                __kernel void compute_surface(
++                    __global const int* positions,
++                    __global int* results,
++                    const int N
++                ) {
++                    int id = get_global_id(0);
++                    if (id >= N) return;
++                    double bx = (double)positions[id*2  ];
++                    double bz = (double)positions[id*2+1];
++                """);
++            src.append("    results[id] = (int)floor(").append(cY(rootFn, "0.0")).append(");\n}\n");
++        }
++    }
++
++    // ─── DF tree walker ──────────────────────────────────────────────────────────
++
++    /**
++     * Emits code for a DensityFunction node (deduplicated by identity).
++     * Returns the FUNCTION NAME only (e.g. "df_3"), not a call expression.
++     * Use c3(fn) or cY(fn, y) to produce call expressions.
++     */
++    private String emitDF(DensityFunction df) {
++        if (failReason != null) return "df_err";
++
++        df = unwrap(df);
++
++        if (ids.containsKey(df)) return "df_" + ids.getInt(df);
++        int id = counter++;
++        ids.put(df, id);
++        String fn = "df_" + id;
++
++        String cn = df.getClass().getSimpleName();
++
++        // Private types detected by class name
++        switch (cn) {
++            case "Constant" -> { emitConstantFn(fn, df.compute(ZERO_CTX)); return fn; }
++            case "BlendAlpha" -> { emitConstantFn(fn, 1.0); return fn; }
++            case "BlendOffset" -> { emitConstantFn(fn, 0.0); return fn; }
++            case "BeardifierMarker" -> { emitConstantFn(fn, 0.0); return fn; }
++        }
++
++        // Public/protected/interface dispatch
++        int srcLenBefore = src.length();
++        if (df instanceof DensityFunctions.CanvasYClampedGradientDF y) {
++            emitYClampedGradient(fn, y);
++        } else if (df instanceof DensityFunctions.CanvasRangeChoiceDF r) {
++            emitRangeChoice(fn, r);
++        } else if (df instanceof DensityFunctions.CanvasFindTopSurfaceDF fts) {
++            emitFindTopSurfaceInner(fn, fts);
++        } else if (df instanceof DensityFunctions.TwoArgumentSimpleFunction t) {
++            emitTwoArg(fn, t);
++        } else if (df instanceof DensityFunctions.Spline sp) {
++            emitSpline(fn, sp);
++        } else if (df instanceof DensityFunctions.ShiftedNoise sn) {
++            emitShiftedNoise(fn, sn);
++        } else if (df instanceof DensityFunctions.Shift s) {
++            emitShiftFull(fn, s.offsetNoise());
++        } else if (df instanceof DensityFunctions.ShiftA s) {
++            emitShiftFixed(fn, s.offsetNoise(), 0.0);
++        } else if (df instanceof DensityFunctions.ShiftB s) {
++            emitShiftB(fn, s.offsetNoise());
++        } else if (df instanceof DensityFunctions.Noise n) {
++            emitNoise(fn, n);
++        } else if (df instanceof BlendedNoise bn) {
++            emitBlendedNoise(fn, bn);
++        } else if (df instanceof DensityFunctions.IntervalSelect is) {
++            emitIntervalSelect(fn, is);
++        } else if (df instanceof DensityFunctions.Clamp cl) {
++            String inner = c3(emitDF(cl.input()));
++            src.append("double ").append(fn)
++               .append("(double bx, double blockY, double bz) { return mc_clamp(")
++               .append(inner).append(", ").append(hexD(cl.minValue()))
++               .append(", ").append(hexD(cl.maxValue())).append("); }\n");
++        } else if (df instanceof DensityFunctions.Mapped m) {
++            emitMapped(fn, m);
++        } else {
++            failReason = "unsupported node: " + df.getClass().getName();
++        }
++
++        // Guard: if emitter wrote nothing (e.g., set failReason and returned),
++        // emit a stub so the CL source is syntactically valid.
++        // failReason is checked by compile() — this stub will never be used in practice.
++        if (src.length() == srcLenBefore) {
++            LOGGER.warn("[CanvasGPU] emitDF wrote no body for id={} class={} failReason={}",
++                id, df.getClass().getName(), failReason);
++            src.append("double ").append(fn)
++               .append("(double bx, double blockY, double bz) { return 0.0; /* stub: ")
++               .append(df.getClass().getSimpleName()).append(" */}\n");
++        }
++
++        return fn;
++    }
++
++    private DensityFunction unwrap(DensityFunction df) {
++        while (true) {
++            if (df instanceof DensityFunctions.HolderHolder hh) { df = hh.function().value(); continue; }
++            if (df instanceof DensityFunctions.MarkerOrMarked m) { df = m.wrapped(); continue; }
++            break;
++        }
++        return df;
++    }
++
++    // ─── Node emitters ────────────────────────────────────────────────────────────
++
++    private void emitConstantFn(String fn, double val) {
++        src.append("double ").append(fn)
++           .append("(double bx, double blockY, double bz) { return ").append(hexD(val)).append("; }\n");
++    }
++
++    private void emitYClampedGradient(String fn, DensityFunctions.CanvasYClampedGradientDF y) {
++        double fromY = y.canvas$ycgFromY(), toY = y.canvas$ycgToY();
++        double fromV = y.canvas$ycgFromValue(), toV = y.canvas$ycgToValue();
++        // Java: Mth.clampedMap(blockY, fromY, toY, fromV, toV)
++        //     = clampedLerp(inverseLerp(blockY,fromY,toY), fromV, toV)
++        //     inverseLerp=(v-fromY)/(toY-fromY); clampedLerp=f<0?fromV:(f>1?toV:lerp)
++        src.append("double ").append(fn).append("(double bx, double blockY, double bz) {\n");
++        src.append("    double f = (blockY - ").append(hexD(fromY)).append(") / ")
++           .append(hexD(toY - fromY)).append(";\n");
++        src.append("    return f<0.0 ? ").append(hexD(fromV)).append(" : (f>1.0 ? ").append(hexD(toV))
++           .append(" : (").append(hexD(fromV)).append(" + f*(").append(hexD(toV)).append(" - ").append(hexD(fromV)).append(")));\n}\n");
++    }
++
++    private void emitNoise(String fn, DensityFunctions.Noise n) {
++        NormalNoise nn = asNormalNoise(n.noise());
++        if (nn == null) { failReason = "Noise: NormalNoise not initialized"; return; }
++        String evalFn = emitNormalNoiseConsts("nn_" + fn, nn);
++        double xzSc = n.xzScale(), ySc = n.yScale();
++        src.append("double ").append(fn).append("(double bx, double blockY, double bz) {\n")
++           .append("    return eval_nn_").append(evalFn)
++           .append("(bx*").append(hexD(xzSc)).append(", blockY*").append(hexD(ySc))
++           .append(", bz*").append(hexD(xzSc)).append(");\n}\n");
++    }
++
++    private void emitShiftedNoise(String fn, DensityFunctions.ShiftedNoise sn) {
++        NormalNoise nn = asNormalNoise(sn.noise());
++        if (nn == null) { failReason = "ShiftedNoise: NormalNoise not initialized"; return; }
++        String shiftX = c3(emitDF(sn.shiftX()));
++        String shiftY = c3(emitDF(sn.shiftY()));
++        String shiftZ = c3(emitDF(sn.shiftZ()));
++        String evalFn = emitNormalNoiseConsts("nn_" + fn, nn);
++        double xzSc = sn.xzScale(), ySc = sn.yScale();
++        src.append("double ").append(fn).append("(double bx, double blockY, double bz) {\n")
++           .append("    double sx=").append(shiftX).append("; double sy=").append(shiftY)
++           .append("; double sz=").append(shiftZ).append(";\n")
++           .append("    return eval_nn_").append(evalFn)
++           .append("(bx*").append(hexD(xzSc)).append("+sx, blockY*").append(hexD(ySc))
++           .append("+sy, bz*").append(hexD(xzSc)).append("+sz);\n}\n");
++    }
++
++    private void emitShiftFull(String fn, DensityFunction.NoiseHolder holder) {
++        NormalNoise nn = asNormalNoise(holder);
++        if (nn == null) { failReason = "Shift: NormalNoise not initialized"; return; }
++        String evalFn = emitNormalNoiseConsts("nn_" + fn, nn);
++        src.append("double ").append(fn).append("(double bx, double blockY, double bz) {\n")
++           .append("    return eval_nn_").append(evalFn)
++           .append("(bx*0.25, blockY*0.25, bz*0.25)*4.0;\n}\n");
++    }
++
++    private void emitShiftFixed(String fn, DensityFunction.NoiseHolder holder, double fixedY) {
++        NormalNoise nn = asNormalNoise(holder);
++        if (nn == null) { failReason = "ShiftA: NormalNoise not initialized"; return; }
++        String evalFn = emitNormalNoiseConsts("nn_" + fn, nn);
++        src.append("double ").append(fn).append("(double bx, double blockY, double bz) {\n")
++           .append("    return eval_nn_").append(evalFn)
++           .append("(bx*0.25, ").append(hexD(fixedY)).append(", bz*0.25)*4.0;\n}\n");
++    }
++
++    private void emitShiftB(String fn, DensityFunction.NoiseHolder holder) {
++        NormalNoise nn = asNormalNoise(holder);
++        if (nn == null) { failReason = "ShiftB: NormalNoise not initialized"; return; }
++        String evalFn = emitNormalNoiseConsts("nn_" + fn, nn);
++        src.append("double ").append(fn).append("(double bx, double blockY, double bz) {\n")
++           .append("    return eval_nn_").append(evalFn)
++           .append("(bz*0.25, bx*0.25, 0.0)*4.0;\n}\n");
++    }
++
++    private void emitTwoArg(String fn, DensityFunctions.TwoArgumentSimpleFunction t) {
++        String a1 = c3(emitDF(t.argument1()));
++        String a2 = c3(emitDF(t.argument2()));
++        // Java: ADD=v1+arg2; MUL=v1==0?0:v1*arg2 (short-circuit); MIN/MAX use Math.min/max
++        // (mc_min/mc_max match Math.min/max for finite; the static-bound short-circuit is value-equivalent).
++        String expr = switch (t.type()) {
++            case ADD -> "(" + a1 + " + " + a2 + ")";
++            case MUL -> "({ double _m1=" + a1 + "; _m1==0.0?0.0:_m1*(" + a2 + "); })";
++            case MIN -> "mc_min(" + a1 + ", " + a2 + ")";
++            case MAX -> "mc_max(" + a1 + ", " + a2 + ")";
++        };
++        if (t.type() == DensityFunctions.TwoArgumentSimpleFunction.Type.MUL) {
++            src.append("double ").append(fn)
++               .append("(double bx, double blockY, double bz) { double _m1=").append(a1)
++               .append("; return _m1==0.0?0.0:_m1*(").append(a2).append("); }\n");
++        } else {
++            src.append("double ").append(fn)
++               .append("(double bx, double blockY, double bz) { return ").append(expr).append("; }\n");
++        }
++    }
++
++    private void emitMapped(String fn, DensityFunctions.Mapped m) {
++        String inner = c3(emitDF(m.input()));
++        switch (m.type()) {
++            case ABS ->
++                src.append("double ").append(fn).append("(double bx, double blockY, double bz) { return fabs(").append(inner).append("); }\n");
++            case SQUARE ->
++                src.append("double ").append(fn).append("(double bx, double blockY, double bz) { double _v=").append(inner).append("; return _v*_v; }\n");
++            case CUBE ->
++                src.append("double ").append(fn).append("(double bx, double blockY, double bz) { double _v=").append(inner).append("; return _v*_v*_v; }\n");
++            case HALF_NEGATIVE ->
++                src.append("double ").append(fn).append("(double bx, double blockY, double bz) { double _v=").append(inner).append("; return _v<0.0?_v*0.5:_v; }\n");
++            case QUARTER_NEGATIVE ->
++                src.append("double ").append(fn).append("(double bx, double blockY, double bz) { double _v=").append(inner).append("; return _v<0.0?_v*0.25:_v; }\n");
++            case SQUEEZE -> {
++                String sqFn = "squeeze_" + fn;
++                // Java: c=Mth.clamp(t,-1,1); c/2.0 - c*c*c/24.0  (division, not *(1/24))
++                src.append("double ").append(sqFn).append("(double t) { double c=mc_clamp(t,-1.0,1.0); return c/2.0-c*c*c/24.0; }\n");
++                src.append("double ").append(fn).append("(double bx, double blockY, double bz) { return ").append(sqFn).append("(").append(inner).append("); }\n");
++            }
++            case INVERT -> // Java: 1.0 / input
++                src.append("double ").append(fn).append("(double bx, double blockY, double bz) { double _v=").append(inner).append("; return 1.0/_v; }\n");
++        }
++    }
++
++    private void emitIntervalSelect(String fn, DensityFunctions.IntervalSelect is) {
++        String inp = c3(emitDF(is.input()));
++        it.unimi.dsi.fastutil.doubles.DoubleList thr = is.thresholds();
++        java.util.List<DensityFunction> funcs = is.functions();
++        String[] fnames = new String[funcs.size()];
++        for (int i = 0; i < funcs.size(); i++) fnames[i] = c3(emitDF(funcs.get(i)));
++        if (failReason != null) return;
++        src.append("double ").append(fn).append("(double bx, double blockY, double bz) {\n");
++        src.append("    double _v=").append(inp).append(";\n");
++        for (int i = 0; i < thr.size(); i++) {
++            src.append("    if (_v < ").append(hexD(thr.getDouble(i))).append(") return ").append(fnames[i]).append(";\n");
++        }
++        src.append("    return ").append(fnames[funcs.size() - 1]).append(";\n}\n");
++    }
++
++    /** Logs all distinct DF node classes in the tree — reveals every unsupported node in one pass. */
++    private static void logNodeClasses(DensityFunction df) {
++        java.util.TreeSet<String> classes = new java.util.TreeSet<>();
++        try {
++            df.mapAll(new DensityFunction.Visitor() {
++                @Override public DensityFunction apply(DensityFunction in) { classes.add(in.getClass().getName()); return in; }
++            });
++        } catch (Throwable ignored) {}
++        LOGGER.warn("[CanvasGPU] DF tree node classes ({}): {}", classes.size(), classes);
++    }
++
++    private void emitRangeChoice(String fn, DensityFunctions.CanvasRangeChoiceDF r) {
++        String inp   = c3(emitDF(r.canvas$rcInput()));
++        String inRng = c3(emitDF(r.canvas$rcWhenIn()));
++        String out   = c3(emitDF(r.canvas$rcWhenOut()));
++        src.append("double ").append(fn).append("(double bx, double blockY, double bz) {\n")
++           .append("    double _v=").append(inp).append(";\n")
++           .append("    return (_v>=").append(hexD(r.canvas$rcMin())).append("&&_v<").append(hexD(r.canvas$rcMax()))
++           .append(") ? ").append(inRng).append(" : ").append(out).append(";\n}\n");
++    }
++
++    private void emitFindTopSurfaceInner(String fn, DensityFunctions.CanvasFindTopSurfaceDF fts) {
++        String densityFn  = emitDF(fts.canvas$ftsInnerDensity());
++        String upperBndFn = emitDF(fts.canvas$ftsUpperBound());
++        int lb = fts.canvas$ftsLowerBound(), ch = fts.canvas$ftsCellHeight();
++        src.append("double ").append(fn).append("(double bx, double blockY, double bz) {\n");
++        src.append("    double topYf=").append(cY(upperBndFn, "0.0")).append(";\n");
++        src.append("    int topY=(int)floor(topYf/").append(ch).append(".0)*").append(ch).append(";\n");
++        src.append("    if (topY<=").append(lb).append(") return ").append(hexD((double)lb)).append(";\n");
++        src.append("    for (int y=topY; y>=").append(lb).append("; y-=").append(ch).append(") {\n");
++        src.append("        if (").append(cY(densityFn, "(double)y")).append(">0.0) return (double)y;\n    }\n");
++        src.append("    return ").append(hexD((double)lb)).append(";\n}\n");
++    }
++
++    private void emitSpline(String fn, DensityFunctions.Spline sp) {
++        String spFn = emitCubicSpline(sp.spline(), fn + "_cs");
++        src.append("double ").append(fn).append("(double bx, double blockY, double bz) { return (double)")
++           .append(c3(spFn)).append("; }\n");
++    }
++
++    private String emitCubicSpline(CubicSpline<DensityFunctions.Spline.Coordinate> cs, String prefix) {
++        return switch (cs) {
++            case CubicSpline.Constant<DensityFunctions.Spline.Coordinate> c -> {
++                String fn = prefix + "_k" + counter++;
++                src.append("float ").append(fn)
++                   .append("(double bx, double blockY, double bz) { return ").append(hexF(c.value())).append("f; }\n");
++                yield fn;
++            }
++            case CubicSpline.Multipoint<DensityFunctions.Spline.Coordinate> mp -> {
++                float[] locs   = mp.locations();
++                float[] derivs = mp.derivatives();
++                int K = locs.length;
++
++                List<String> valFns = new ArrayList<>(mp.values().size());
++                for (int i = 0; i < mp.values().size(); i++) {
++                    valFns.add(emitCubicSpline(mp.values().get(i), prefix + "_v" + i));
++                }
++                // coordinate function: emitDF returns name, wrap in c3()
++                String coordExpr = c3(emitDF(mp.coordinate().function()));
++
++                String fn = prefix + "_mp" + counter++;
++                src.append("float ").append(fn).append("(double bx, double blockY, double bz) {\n");
++                src.append("    float x = (float)(").append(coordExpr).append(");\n");
++
++                src.append("    const float locs[").append(K).append("] = {");
++                for (int i = 0; i < K; i++) { if (i>0) src.append(','); src.append(hexF(locs[i])).append('f'); }
++                src.append("};\n");
++                src.append("    const float derivs[").append(K).append("] = {");
++                for (int i = 0; i < K; i++) { if (i>0) src.append(','); src.append(hexF(derivs[i])).append('f'); }
++                src.append("};\n");
++
++                if (K == 1) {
++                    src.append("    float v0=").append(c3(valFns.get(0))).append(";\n");
++                    src.append("    return v0+derivs[0]*(x-locs[0]);\n}\n");
++                    yield fn;
++                }
++
++                src.append("    if (x<locs[0]) { float v=").append(c3(valFns.get(0)))
++                   .append("; return v+derivs[0]*(x-locs[0]); }\n");
++                src.append("    if (x>=locs[").append(K-1).append("]) { float v=")
++                   .append(c3(valFns.get(K-1))).append("; return v+derivs[").append(K-1)
++                   .append("]*(x-locs[").append(K-1).append("]); }\n");
++
++                src.append("    int idx=0;\n");
++                src.append("    while (idx<").append(K-2).append(" && x>=locs[idx+1]) idx++;\n");
++
++                src.append("    float y1,y2;\n    switch(idx){\n");
++                for (int i = 0; i < K-1; i++) {
++                    src.append("        case ").append(i).append(": y1=").append(c3(valFns.get(i)))
++                       .append("; y2=").append(c3(valFns.get(i+1))).append("; break;\n");
++                }
++                src.append("        default: y1=y2=0.0f;\n    }\n");
++
++                src.append("    float x1=locs[idx],x2=locs[idx+1];\n");
++                src.append("    float t=(x-x1)/(x2-x1);\n");
++                src.append("    float d1=derivs[idx],d2=derivs[idx+1];\n");
++                src.append("    float a=d1*(x2-x1)-(y2-y1);\n");
++                src.append("    float b=-d2*(x2-x1)+(y2-y1);\n");
++                src.append("    return y1+t*(y2-y1)+t*(1.0f-t)*(a+t*(b-a));\n}\n");
++
++                yield fn;
++            }
++            default -> throw new IllegalArgumentException("Unknown CubicSpline: " + cs.getClass());
++        };
++    }
++
++    // ─── NormalNoise emission ─────────────────────────────────────────────────────
++
++    /** Emits NormalNoise constants/eval function for nn under nnId.
++     *  If nn was already emitted under a different nnId, returns the canonical nnId
++     *  (dedup: no re-emission). Always returns the nnId of the eval_nn_ function to call. */
++    private String emitNormalNoiseConsts(String nnId, NormalNoise nn) {
++        String canonical = emittedNNIds.get(nn);
++        if (canonical != null) return canonical;  // reuse existing eval function
++        emittedNNIds.put(nn, nnId);
++
++        PerlinNoise first  = nn.canvas$getFirst();
++        PerlinNoise second = nn.canvas$getSecond();
++        double normFactor  = nn.canvas$getValueFactor();
++        double inputFactor = NormalNoise.canvas$getInputFactor();
++
++        double[] octA  = buildOctParams(first);
++        int[]    permA = buildPermBuffer(first);
++        double[] octB  = buildOctParams(second);
++        int[]    permB = buildPermBuffer(second);
++        int numA = octA.length / 6, numB = octB.length / 6;
++
++        emitDoubleArray(nnId + "_oct_a", octA);
++        emitIntArray(   nnId + "_perm_a", permA);
++        emitDoubleArray(nnId + "_oct_b", octB);
++        emitIntArray(   nnId + "_perm_b", permB);
++
++        // NormalNoise.getValue = (first(x,y,z) + second(x*F,y*F,z*F)) * valueFactor
++        String IF = hexD(inputFactor);
++        src.append("double eval_nn_").append(nnId).append("(double x, double y, double z) {\n");
++        emitPerlinLoop("va", nnId + "_oct_a", nnId + "_perm_a", numA, "x", "y", "z");
++        emitPerlinLoop("vb", nnId + "_oct_b", nnId + "_perm_b", numB,
++                       "x*" + IF, "y*" + IF, "z*" + IF);
++        src.append("    return (va+vb)*").append(hexD(normFactor)).append(";\n}\n");
++        return nnId;
++    }
++
++    // PerlinNoise.getValue: d += amp*g*vf over octaves, g=noise(wrap(c*factor)), exact order.
++    // BlendedNoise.compute — base 3D terrain noise (verified bit-exact in gpu_verify/blended_match.c)
++    private void emitBlendedNoise(String fn, BlendedNoise bn) {
++        emitBlendedTables(fn + "_main", bn.canvas$mainNoise(), 8);
++        emitBlendedTables(fn + "_min",  bn.canvas$minLimitNoise(), 16);
++        emitBlendedTables(fn + "_max",  bn.canvas$maxLimitNoise(), 16);
++        String xzMul = hexD(bn.canvas$xzMultiplier()), yMul = hexD(bn.canvas$yMultiplier());
++        String xzFac = hexD(bn.canvas$xzFactor()), yFac = hexD(bn.canvas$yFactor()), smear = hexD(bn.canvas$smearScaleMultiplier());
++        src.append("double ").append(fn).append("(double bx, double blockY, double bz) {\n");
++        src.append("    double limitX=bx*").append(xzMul).append(", limitY=blockY*").append(yMul).append(", limitZ=bz*").append(xzMul).append(";\n");
++        src.append("    double mainX=limitX/").append(xzFac).append(", mainY=limitY/").append(yFac).append(", mainZ=limitZ/").append(xzFac).append(";\n");
++        src.append("    double limitSmear=").append(yMul).append("*").append(smear).append(", mainSmear=limitSmear/").append(yFac).append(";\n");
++        src.append("    double bmin=0.0,bmax=0.0,mnv=0.0,pw=1.0;\n");
++        src.append("    for(int i=0;i<8;i++){ if(").append(fn).append("_main_present[i]){ __constant int* pp=").append(fn).append("_main_perm+i*256;\n");
++        src.append("        mnv+=mc_perlin5(pp, mc_wrap(mainX*pw), mc_wrap(mainY*pw), mc_wrap(mainZ*pw), ")
++           .append(fn).append("_main_off[i*3],").append(fn).append("_main_off[i*3+1],").append(fn).append("_main_off[i*3+2], mainSmear*pw, mainY*pw)/pw; } pw/=2.0; }\n");
++        src.append("    double factor=(mnv/10.0+1.0)/2.0; int isMax=factor>=1.0, isMin=factor<=0.0; pw=1.0;\n");
++        src.append("    for(int i=0;i<16;i++){ double wx=mc_wrap(limitX*pw),wy=mc_wrap(limitY*pw),wz=mc_wrap(limitZ*pw),ysp=limitSmear*pw;\n");
++        src.append("        if(!isMax && ").append(fn).append("_min_present[i]){ __constant int* pp=").append(fn).append("_min_perm+i*256;\n");
++        src.append("            bmin+=mc_perlin5(pp,wx,wy,wz,").append(fn).append("_min_off[i*3],").append(fn).append("_min_off[i*3+1],").append(fn).append("_min_off[i*3+2], ysp, limitY*pw)/pw; }\n");
++        src.append("        if(!isMin && ").append(fn).append("_max_present[i]){ __constant int* pp=").append(fn).append("_max_perm+i*256;\n");
++        src.append("            bmax+=mc_perlin5(pp,wx,wy,wz,").append(fn).append("_max_off[i*3],").append(fn).append("_max_off[i*3+1],").append(fn).append("_max_off[i*3+2], ysp, limitY*pw)/pw; }\n");
++        src.append("        pw/=2.0; }\n");
++        src.append("    return mc_clampedLerp(factor, bmin/512.0, bmax/512.0)/128.0;\n}\n");
++    }
++
++    // getOctaveNoise(i) = noiseLevels[len-1-i] (REVERSED). Emits perm/off/present arrays for maxOct octaves.
++    private void emitBlendedTables(String prefix, PerlinNoise pn, int maxOct) {
++        ImprovedNoise[] levels = pn.canvas$getNoiseLevels();
++        int len = levels.length;
++        int[] perm = new int[maxOct * 256];
++        double[] off = new double[maxOct * 3];
++        int[] present = new int[maxOct];
++        for (int i = 0; i < maxOct; i++) {
++            int idx = len - 1 - i;
++            if (idx >= 0 && idx < len && levels[idx] != null) {
++                present[i] = 1;
++                byte[] pt = levels[idx].getPermTable();
++                for (int j = 0; j < 256; j++) perm[i*256+j] = pt[j] & 0xFF;
++                off[i*3] = levels[idx].xo; off[i*3+1] = levels[idx].yo; off[i*3+2] = levels[idx].zo;
++            }
++        }
++        emitIntArray(prefix + "_perm", perm);
++        emitDoubleArray(prefix + "_off", off);
++        emitIntArray(prefix + "_present", present);
++    }
++
++    private void emitPerlinLoop(String varName, String octArr, String permArr, int num,
++                                String cx, String cy, String cz) {
++        src.append("    double ").append(varName).append("=0.0;\n");
++        src.append("    double ").append(varName).append("_x=").append(cx)
++           .append(", ").append(varName).append("_y=").append(cy)
++           .append(", ").append(varName).append("_z=").append(cz).append(";\n");
++        src.append("    for(int i=0;i<").append(num).append(";i++){\n");
++        src.append("        double amp=").append(octArr).append("[i*6+4]; if(amp==0.0) continue;\n");
++        src.append("        double freq=").append(octArr).append("[i*6+3];\n");
++        src.append("        double vf=").append(octArr).append("[i*6+5];\n");
++        src.append("        __constant int* pp=").append(permArr).append("+i*256;\n");
++        src.append("        double g=mc_perlin(pp, mc_wrap(").append(varName).append("_x*freq), mc_wrap(")
++           .append(varName).append("_y*freq), mc_wrap(").append(varName).append("_z*freq), ")
++           .append(octArr).append("[i*6+0],").append(octArr).append("[i*6+1],").append(octArr).append("[i*6+2]);\n");
++        src.append("        ").append(varName).append("+=amp*g*vf;\n    }\n");
++    }
++
++    private void emitDoubleArray(String name, double[] arr) {
++        src.append("__constant double ").append(name).append('[').append(arr.length).append("]={");
++        for (int i = 0; i < arr.length; i++) { if (i>0) src.append(','); src.append(hexD(arr[i])); }
++        src.append("};\n");
++    }
++
++    private void emitIntArray(String name, int[] arr) {
++        src.append("__constant int ").append(name).append('[').append(arr.length).append("]={");
++        for (int i = 0; i < arr.length; i++) { if (i>0) src.append(','); src.append(arr[i]); }
++        src.append("};\n");
++    }
++
++    // ─── Helpers ─────────────────────────────────────────────────────────────────
++
++    // Layout per octave (6 doubles): [xo, yo, zo, freq, amp, vf]. inputScale is NOT folded here
++    // (Java applies INPUT_FACTOR to the coordinate, not the frequency) and vf/amp are kept
++    // separate so the loop computes amp*g*vf in Java's exact left-assoc order.
++    private static double[] buildOctParams(PerlinNoise pn) {
++        ImprovedNoise[] levels = pn.canvas$getNoiseLevels();
++        double[] amps = pn.canvas$getAmplitudesArray();
++        double freq0 = pn.canvas$getLowestFreqInputFactor();
++        double vf0   = pn.canvas$getLowestFreqValueFactor();
++        int n = levels.length;
++        double[] p = new double[n * 6];
++        double freq = freq0, vf = vf0;
++        for (int i = 0; i < n; i++) {
++            ImprovedNoise lvl = levels[i];
++            if (lvl != null && i < amps.length && amps[i] != 0.0) {
++                p[i*6]=lvl.xo; p[i*6+1]=lvl.yo; p[i*6+2]=lvl.zo;
++                p[i*6+3]=freq; p[i*6+4]=amps[i]; p[i*6+5]=vf;
++            }
++            freq*=2.0; vf/=2.0;
++        }
++        return p;
++    }
++
++    private static int[] buildPermBuffer(PerlinNoise pn) {
++        ImprovedNoise[] levels = pn.canvas$getNoiseLevels();
++        int n = levels.length;
++        int[] buf = new int[n * 256];
++        for (int i = 0; i < n; i++) {
++            ImprovedNoise lvl = levels[i];
++            if (lvl != null) { byte[] pt = lvl.getPermTable(); for (int j=0;j<256;j++) buf[i*256+j]=pt[j]&0xFF; }
++        }
++        return buf;
++    }
++
++    private static NormalNoise asNormalNoise(DensityFunction.NoiseHolder h) {
++        return h.noise() instanceof NormalNoise nn ? nn : null;
++    }
++
++    // Wrap negatives in parens so a preceding operator never forms `--`/`*-` adjacency bugs.
++    private static String hexD(double v) {
++        if (!Double.isFinite(v)) return Double.isNaN(v) ? "0.0" : (v > 0 ? "1.0e300" : "(-1.0e300)");
++        String s = Double.toHexString(v);
++        return s.startsWith("-") ? "(" + s + ")" : s;
++    }
++
++    // NOT paren-wrapped: hexF is always followed by an 'f' suffix or used in array/return context.
++    private static String hexF(float v) {
++        if (!Float.isFinite(v)) return Float.isNaN(v) ? "0.0" : (v > 0 ? "1.0e30" : "-1.0e30");
++        return Float.toHexString(v);
++    }
++}

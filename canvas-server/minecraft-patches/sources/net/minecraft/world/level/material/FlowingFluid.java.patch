@@ -1,5 +1,74 @@
 --- a/net/minecraft/world/level/material/FlowingFluid.java
 +++ b/net/minecraft/world/level/material/FlowingFluid.java
+@@ -60,6 +_,15 @@
+     private static final int COLLISION_OCCLUSION_CACHE_SIZE = 2048;
+     private static final ThreadLocal<ca.spottedleaf.moonrise.patches.collisions.util.FluidOcclusionCacheKey[]> COLLISION_OCCLUSION_CACHE = ThreadLocal.withInitial(() -> new ca.spottedleaf.moonrise.patches.collisions.util.FluidOcclusionCacheKey[COLLISION_OCCLUSION_CACHE_SIZE]);
+ 
++    // Canvas start - ThreadLocal allocation pool: eliminate per-fluid-tick GC pressure
++    // getNewLiquid() was allocating a new MutableBlockPos every tick per spreading block.
++    // getSpread() was allocating a new EnumMap + SpreadContext (with two fastutil maps) every call.
++    // For a 256x256 water sheet: ~65k x 3 object allocations per tick wave.
++    private static final ThreadLocal<BlockPos.MutableBlockPos> FLUID_MPOS = ThreadLocal.withInitial(BlockPos.MutableBlockPos::new);
++    private static final ThreadLocal<java.util.EnumMap<Direction, FluidState>> SPREAD_RESULT = ThreadLocal.withInitial(() -> new java.util.EnumMap<>(Direction.class));
++    private static final ThreadLocal<SpreadContext> SPREAD_CTX_POOL = ThreadLocal.withInitial(SpreadContext::new);
++    // Canvas end - ThreadLocal allocation pool
++
+ 
+     /**
+      * Due to init order, we need to use callbacks to initialise our state
+@@ -162,13 +_,14 @@
+                 Fluid newBelowFluidType = newBelowFluid.getType();
+                 if (belowFluid.canBeReplacedWith(level, belowPos, newBelowFluidType, Direction.DOWN)
+                     && canHoldSpecificFluid(level, belowPos, belowState, newBelowFluidType)) {
+-                    // CraftBukkit start
+-                    org.bukkit.block.Block source = org.bukkit.craftbukkit.block.CraftBlock.at(level, pos);
+-                    org.bukkit.event.block.BlockFromToEvent event = new org.bukkit.event.block.BlockFromToEvent(source, org.bukkit.block.BlockFace.DOWN);
+-                    level.getCraftServer().getPluginManager().callEvent(event);
+-
+-                    if (event.isCancelled()) {
+-                        return;
++                    // CraftBukkit start - Canvas: skip event alloc when no listeners
++                    if (org.bukkit.event.block.BlockFromToEvent.getHandlerList().getRegisteredListeners().length != 0) {
++                        org.bukkit.block.Block source = org.bukkit.craftbukkit.block.CraftBlock.at(level, pos);
++                        org.bukkit.event.block.BlockFromToEvent event = new org.bukkit.event.block.BlockFromToEvent(source, org.bukkit.block.BlockFace.DOWN);
++                        level.getCraftServer().getPluginManager().callEvent(event);
++                        if (event.isCancelled()) {
++                            return;
++                        }
+                     }
+                     // CraftBukkit end
+                     this.spreadTo(level, belowPos, belowState, Direction.DOWN, newBelowFluid);
+@@ -201,13 +_,14 @@
+                 BlockPos neighborPos = pos.relative(spread);
+                 final BlockState neighborState = level.getBlockStateIfLoaded(neighborPos); // Paper - Prevent chunk loading from fluid flowing
+                 if (neighborState == null) continue; // Paper - Prevent chunk loading from fluid flowing
+-                // CraftBukkit start
+-                org.bukkit.block.Block source = org.bukkit.craftbukkit.block.CraftBlock.at(level, pos);
+-                org.bukkit.event.block.BlockFromToEvent event = new org.bukkit.event.block.BlockFromToEvent(source, org.bukkit.craftbukkit.block.CraftBlock.notchToBlockFace(spread));
+-                level.getCraftServer().getPluginManager().callEvent(event);
+-
+-                if (event.isCancelled()) {
+-                    continue;
++                // CraftBukkit start - Canvas: skip event alloc when no listeners
++                if (org.bukkit.event.block.BlockFromToEvent.getHandlerList().getRegisteredListeners().length != 0) {
++                    org.bukkit.block.Block source = org.bukkit.craftbukkit.block.CraftBlock.at(level, pos);
++                    org.bukkit.event.block.BlockFromToEvent event = new org.bukkit.event.block.BlockFromToEvent(source, org.bukkit.craftbukkit.block.CraftBlock.notchToBlockFace(spread));
++                    level.getCraftServer().getPluginManager().callEvent(event);
++                    if (event.isCancelled()) {
++                        continue;
++                    }
+                 }
+                 // CraftBukkit end
+                 this.spreadTo(level, neighborPos, neighborState, spread, newNeighborFluid); // Paper - Prevent chunk loading from fluid flowing
+@@ -218,7 +_,7 @@
+     protected FluidState getNewLiquid(final ServerLevel level, final BlockPos pos, final BlockState state) {
+         int highestNeighbor = 0;
+         int neighbourSources = 0;
+-        BlockPos.MutableBlockPos mutablePos = new BlockPos.MutableBlockPos();
++        BlockPos.MutableBlockPos mutablePos = FLUID_MPOS.get(); // Canvas - reuse ThreadLocal, was: new BlockPos.MutableBlockPos()
+ 
+         for (Direction direction : Direction.Plane.HORIZONTAL) {
+             BlockPos relativePos = mutablePos.setWithOffset(pos, direction);
 @@ -341,30 +_,122 @@
          final LevelReader level, final BlockPos pos, final int pass, final Direction from, final BlockState state, final FlowingFluid.SpreadContext context
      ) {
@@ -158,6 +227,27 @@
              && canPassThroughWall(direction, level, sourcePos, sourceState, testPos, testState);
      }
  
+@@ -423,7 +_,10 @@
+ 
+     protected Map<Direction, FluidState> getSpread(final ServerLevel level, final BlockPos pos, final BlockState state) {
+         int lowest = 1000;
+-        Map<Direction, FluidState> result = Maps.newEnumMap(Direction.class);
++        // Canvas start - reuse ThreadLocal EnumMap instead of allocating new one each call
++        final java.util.EnumMap<Direction, FluidState> result = SPREAD_RESULT.get();
++        result.clear();
++        // Canvas end
+         FlowingFluid.SpreadContext context = null;
+ 
+         for (Direction direction : Direction.Plane.HORIZONTAL) {
+@@ -435,7 +_,7 @@
+                 FluidState newFluid = this.getNewLiquid(level, testPos, testState);
+                 if (canHoldSpecificFluid(level, testPos, testState, newFluid.getType())) {
+                     if (context == null) {
+-                        context = new FlowingFluid.SpreadContext(level, pos);
++                        context = SPREAD_CTX_POOL.get().reset(this, level, pos); // Canvas - reuse ThreadLocal SpreadContext
+                     }
+ 
+                     int distance;
 @@ -479,7 +_,7 @@
      }
  
@@ -167,3 +257,80 @@
      }
  
      public static boolean canHoldSpecificFluid(final BlockGetter level, final BlockPos pos, final BlockState state, final Fluid newFluid) {
+@@ -500,23 +_,27 @@
+             if (newFluidState.isEmpty()) {
+                 fluidState = newFluidState;
+                 blockState = Blocks.AIR.defaultBlockState();
+-                // CraftBukkit start
+-                org.bukkit.event.block.FluidLevelChangeEvent event = org.bukkit.craftbukkit.event.CraftEventFactory.callFluidLevelChangeEvent(level, pos, blockState);
+-                if (event.isCancelled()) {
+-                    return;
++                // CraftBukkit start - Canvas: skip event alloc when no listeners
++                if (org.bukkit.event.block.FluidLevelChangeEvent.getHandlerList().getRegisteredListeners().length != 0) {
++                    org.bukkit.event.block.FluidLevelChangeEvent event = org.bukkit.craftbukkit.event.CraftEventFactory.callFluidLevelChangeEvent(level, pos, blockState);
++                    if (event.isCancelled()) {
++                        return;
++                    }
++                    blockState = ((org.bukkit.craftbukkit.block.data.CraftBlockData) event.getNewData()).getState();
+                 }
+-                blockState = ((org.bukkit.craftbukkit.block.data.CraftBlockData) event.getNewData()).getState();
+                 // CraftBukkit end
+                 level.setBlock(pos, blockState, Block.UPDATE_ALL);
+             } else if (newFluidState != fluidState) {
+                 fluidState = newFluidState;
+                 blockState = fluidState.createLegacyBlock();
+-                // CraftBukkit start
+-                org.bukkit.event.block.FluidLevelChangeEvent event = org.bukkit.craftbukkit.event.CraftEventFactory.callFluidLevelChangeEvent(level, pos, blockState);
+-                if (event.isCancelled()) {
+-                    return;
++                // CraftBukkit start - Canvas: skip event alloc when no listeners
++                if (org.bukkit.event.block.FluidLevelChangeEvent.getHandlerList().getRegisteredListeners().length != 0) {
++                    org.bukkit.event.block.FluidLevelChangeEvent event = org.bukkit.craftbukkit.event.CraftEventFactory.callFluidLevelChangeEvent(level, pos, blockState);
++                    if (event.isCancelled()) {
++                        return;
++                    }
++                    blockState = ((org.bukkit.craftbukkit.block.data.CraftBlockData) event.getNewData()).getState();
+                 }
+-                blockState = ((org.bukkit.craftbukkit.block.data.CraftBlockData) event.getNewData()).getState();
+                 // CraftBukkit end
+                 level.setBlock(pos, blockState, Block.UPDATE_ALL);
+                 level.scheduleTick(pos, fluidState.getType(), tickDelay);
+@@ -571,16 +_,25 @@
+         }
+     }
+ 
+-    protected class SpreadContext {
+-        private final BlockGetter level;
+-        private final BlockPos origin;
++    // Canvas start - static SpreadContext for ThreadLocal pool (was non-static inner class, causing allocation on every getSpread() call)
++    protected static class SpreadContext {
++        private FlowingFluid fluid;   // set by reset(); replaces implicit FlowingFluid.this
++        private BlockGetter level;
++        private BlockPos origin;
+         private final Short2ObjectMap<BlockState> stateCache = new Short2ObjectOpenHashMap<>();
+         private final Short2BooleanMap holeCache = new Short2BooleanOpenHashMap();
+ 
+-        private SpreadContext(final BlockGetter level, final BlockPos origin) {
++        SpreadContext() {} // for ThreadLocal.withInitial
++
++        SpreadContext reset(final FlowingFluid fluid, final BlockGetter level, final BlockPos origin) {
++            this.fluid = fluid;
+             this.level = level;
+             this.origin = origin;
++            this.stateCache.clear();
++            this.holeCache.clear();
++            return this;
+         }
++        // Canvas end
+ 
+         public BlockState getBlockState(final BlockPos pos) {
+             return this.getBlockState(pos, this.getCacheKey(pos));
+@@ -614,7 +_,7 @@
+                 BlockState state = this.getBlockState(pos, key);
+                 BlockPos below = pos.below();
+                 BlockState belowState = this.level.getBlockState(below);
+-                return FlowingFluid.this.isWaterHole(this.level, pos, state, below, belowState);
++                return this.fluid.isWaterHole(this.level, pos, state, below, belowState); // Canvas - was FlowingFluid.this (required non-static inner)
+             });
+         }
+ 

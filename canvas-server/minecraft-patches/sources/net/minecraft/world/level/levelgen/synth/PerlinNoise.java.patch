@@ -51,3 +51,17 @@
      }
  
      @Deprecated
+@@ -196,6 +_,13 @@
+     protected DoubleList amplitudes() {
+         return this.amplitudes;
+     }
++
++    // Canvas start - GPU noise: accessors for GPU batch dispatch
++    public @Nullable ImprovedNoise[] canvas$getNoiseLevels() { return this.noiseLevels; }
++    public double[] canvas$getAmplitudesArray() { return this.canvas$amplitudesArray; }
++    public double canvas$getLowestFreqInputFactor() { return this.lowestFreqInputFactor; }
++    public double canvas$getLowestFreqValueFactor() { return this.lowestFreqValueFactor; }
++    // Canvas end - GPU noise
+ 
+     @VisibleForTesting
+     public void parityConfigString(final StringBuilder sb) {

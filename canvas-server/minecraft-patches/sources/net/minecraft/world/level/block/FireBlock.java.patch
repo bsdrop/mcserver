@@ -1,0 +1,49 @@
+--- a/net/minecraft/world/level/block/FireBlock.java
++++ b/net/minecraft/world/level/block/FireBlock.java
+@@ -106,6 +_,11 @@
+             if (!(level instanceof Level world)) {
+                 return Blocks.AIR.defaultBlockState();
+             }
++            // Canvas start - skip event alloc when no listeners
++            if (org.bukkit.event.block.BlockFadeEvent.getHandlerList().getRegisteredListeners().length == 0) {
++                return Blocks.AIR.defaultBlockState();
++            }
++            // Canvas end
+             org.bukkit.craftbukkit.block.CraftBlockState snapshot = org.bukkit.craftbukkit.block.CraftBlockStates.getBlockState(world, pos);
+             snapshot.setBlock(Blocks.AIR.defaultBlockState());
+ 
+@@ -222,9 +_,10 @@
+ 
+                                     if (odds > 0 && random.nextInt(rate) <= odds && (!level.isRaining() || !this.isNearRain(level, testPos))) {
+                                         int spreadAge = Math.min(15, age + random.nextInt(5) / 4);
+-                                        // CraftBukkit start - Call to stop spread of fire
++                                        // CraftBukkit start - Canvas: skip event alloc when no listeners
+                                         if (!level.getBlockState(testPos).is(Blocks.FIRE)) {
+-                                            if (org.bukkit.craftbukkit.event.CraftEventFactory.callBlockIgniteEvent(level, testPos, pos).isCancelled()) {
++                                            if (org.bukkit.event.block.BlockIgniteEvent.getHandlerList().getRegisteredListeners().length != 0
++                                                && org.bukkit.craftbukkit.event.CraftEventFactory.callBlockIgniteEvent(level, testPos, pos).isCancelled()) {
+                                                 continue;
+                                             }
+ 
+@@ -266,13 +_,14 @@
+         if (random.nextInt(chance) < odds) {
+             BlockState oldState = level.getBlockState(pos);
+ 
+-            // CraftBukkit start
+-            org.bukkit.block.Block burnBlock = org.bukkit.craftbukkit.block.CraftBlock.at(level, pos);
+-            org.bukkit.block.Block sourceBlock = org.bukkit.craftbukkit.block.CraftBlock.at(level, sourcePos);
+-
+-            org.bukkit.event.block.BlockBurnEvent event = new org.bukkit.event.block.BlockBurnEvent(burnBlock, sourceBlock);
+-            if (!event.callEvent()) {
+-                return;
++            // CraftBukkit start - Canvas: skip event alloc when no listeners
++            if (org.bukkit.event.block.BlockBurnEvent.getHandlerList().getRegisteredListeners().length != 0) {
++                org.bukkit.block.Block burnBlock = org.bukkit.craftbukkit.block.CraftBlock.at(level, pos);
++                org.bukkit.block.Block sourceBlock = org.bukkit.craftbukkit.block.CraftBlock.at(level, sourcePos);
++                org.bukkit.event.block.BlockBurnEvent event = new org.bukkit.event.block.BlockBurnEvent(burnBlock, sourceBlock);
++                if (!event.callEvent()) {
++                    return;
++                }
+             }
+ 
+             if (oldState.getBlock() instanceof TntBlock && !org.bukkit.craftbukkit.event.CraftEventFactory.callTNTPrimeEvent(level, pos, org.bukkit.event.block.TNTPrimeEvent.PrimeCause.FIRE, null, sourcePos)) {
