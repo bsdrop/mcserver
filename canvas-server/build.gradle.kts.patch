@@ -142,6 +142,27 @@
              "Build-Number" to (build ?: ""),
              "Build-Time" to buildTime.toString(),
              "Git-Branch" to gitBranch,
+@@ -212,13 +_,20 @@
+ // Use TCA for console improvements
+ tasks.jar {
+     val archiveOperations = services.archiveOperations
+     from(alsoShade.elements.map {
+         it.map { f ->
+             if (f.asFile.isFile) {
+                 archiveOperations.zipTree(f.asFile)
+             } else {
+                 f.asFile
+             }
+         }
+     })
++    // Bundle pre-compiled native SIMD libraries (Rust, per-arch).
++    // Source: canvas-native/out/<platform>/<variant>.so
++    // Destination inside JAR: native/<platform>/<variant>.so
++    val nativeOut = rootProject.layout.projectDirectory.dir("canvas-native/out")
++    if (nativeOut.asFile.exists()) {
++        from(nativeOut) { into("native") }
++    }
+ }
 @@ -264,17 +_,18 @@
      javaLauncher.set(project.javaToolchains.launcherFor {
          languageVersion.set(JavaLanguageVersion.of(25))

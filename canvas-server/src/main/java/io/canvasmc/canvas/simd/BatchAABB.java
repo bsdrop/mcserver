@@ -40,6 +40,12 @@ public final class BatchAABB {
         final float qMaxX, final float qMaxY, final float qMaxZ,
         final boolean[] out
     ) {
+        if (NativeBatchAABB.isLoaded()) {
+            NativeBatchAABB.nativeIntersectBatch(
+                eMinX, eMinY, eMinZ, eMaxX, eMaxY, eMaxZ, count,
+                qMinX, qMinY, qMinZ, qMaxX, qMaxY, qMaxZ, out);
+            return;
+        }
         final FloatVector vQMinX = FloatVector.broadcast(SPECIES, qMinX);
         final FloatVector vQMinY = FloatVector.broadcast(SPECIES, qMinY);
         final FloatVector vQMinZ = FloatVector.broadcast(SPECIES, qMinZ);

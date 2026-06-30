@@ -1,0 +1,21 @@
+[package]
+name = "canvas-native"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "canvas_native"
+crate-type = ["cdylib"]
+
+[dependencies]
+jni = { version = "0.21", default-features = false }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.release.package."*"]
+opt-level = 3
