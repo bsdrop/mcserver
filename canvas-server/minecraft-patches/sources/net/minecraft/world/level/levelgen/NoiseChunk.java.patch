@@ -1,5 +1,17 @@
 --- a/net/minecraft/world/level/levelgen/NoiseChunk.java
 +++ b/net/minecraft/world/level/levelgen/NoiseChunk.java
+@@ -31,6 +_,11 @@
+     private final int firstNoiseZ;
+     private final List<NoiseChunk.NoiseInterpolator> interpolators;
+     private final List<NoiseChunk.CacheAllInCell> cellCaches;
++    // Canvas - array snapshots of the two lists above, populated when interpolation begins; the per-block hot
++    // loops iterate these arrays instead of the ArrayLists so enhanced-for compiles to an index loop with no
++    // per-call Iterator allocation (ArrayList$Itr.next() was a top worldgen leaf). Lists are immutable post-construction.
++    private NoiseChunk.NoiseInterpolator[] interpolatorsArr;
++    private NoiseChunk.CacheAllInCell[] cellCachesArr;
+     private final Map<DensityFunction, DensityFunction> wrapped = new HashMap<>();
+     private final Long2IntMap preliminarySurfaceLevelCache = new Long2IntOpenHashMap();
+     private final Aquifer aquifer;
 @@ -153,10 +_,36 @@
          }
  
@@ -50,6 +62,70 @@
      private void fillSlice(final boolean slice0, final int cellX) {
          this.cellStartBlockX = cellX * this.cellWidth;
          this.inCellX = 0;
+@@ -238,7 +_,7 @@
+             this.inCellZ = 0;
+             this.arrayInterpolationCounter++;
+ 
+-            for (NoiseChunk.NoiseInterpolator noiseInterpolator : this.interpolators) {
++            for (NoiseChunk.NoiseInterpolator noiseInterpolator : this.interpolatorsArr) { // Canvas - array (no Iterator alloc)
+                 double[] slice = (slice0 ? noiseInterpolator.slice0 : noiseInterpolator.slice1)[cellZIndex];
+                 noiseInterpolator.fillArray(slice, this.sliceFillingContextProvider);
+             }
+@@ -254,6 +_,9 @@
+ 
+         this.interpolating = true;
+         this.interpolationCounter = 0L;
++        // Canvas - snapshot to arrays for iterator-free hot loops (all interpolators/cellCaches are registered by now)
++        this.interpolatorsArr = this.interpolators.toArray(new NoiseChunk.NoiseInterpolator[0]);
++        this.cellCachesArr = this.cellCaches.toArray(new NoiseChunk.CacheAllInCell[0]);
+         this.fillSlice(true, this.firstCellX);
+     }
+ 
+@@ -294,7 +_,7 @@
+     }
+ 
+     public void selectCellYZ(final int cellYIndex, final int cellZIndex) {
+-        for (NoiseChunk.NoiseInterpolator i : this.interpolators) {
++        for (NoiseChunk.NoiseInterpolator i : this.interpolatorsArr) { // Canvas - array (no Iterator alloc)
+             i.selectCellYZ(cellYIndex, cellZIndex);
+         }
+ 
+@@ -303,7 +_,7 @@
+         this.cellStartBlockZ = (this.firstCellZ + cellZIndex) * this.cellWidth;
+         this.arrayInterpolationCounter++;
+ 
+-        for (NoiseChunk.CacheAllInCell cellCache : this.cellCaches) {
++        for (NoiseChunk.CacheAllInCell cellCache : this.cellCachesArr) { // Canvas - array (no Iterator alloc)
+             cellCache.noiseFiller.fillArray(cellCache.values, this);
+         }
+ 
+@@ -314,7 +_,7 @@
+     public void updateForY(final int posY, final double factorY) {
+         this.inCellY = posY - this.cellStartBlockY;
+ 
+-        for (NoiseChunk.NoiseInterpolator i : this.interpolators) {
++        for (NoiseChunk.NoiseInterpolator i : this.interpolatorsArr) { // Canvas - array (no Iterator alloc)
+             i.updateForY(factorY);
+         }
+     }
+@@ -322,7 +_,7 @@
+     public void updateForX(final int posX, final double factorX) {
+         this.inCellX = posX - this.cellStartBlockX;
+ 
+-        for (NoiseChunk.NoiseInterpolator i : this.interpolators) {
++        for (NoiseChunk.NoiseInterpolator i : this.interpolatorsArr) { // Canvas - array (no Iterator alloc)
+             i.updateForX(factorX);
+         }
+     }
+@@ -331,7 +_,7 @@
+         this.inCellZ = posZ - this.cellStartBlockZ;
+         this.interpolationCounter++;
+ 
+-        for (NoiseChunk.NoiseInterpolator i : this.interpolators) {
++        for (NoiseChunk.NoiseInterpolator i : this.interpolatorsArr) { // Canvas - array (no Iterator alloc)
+             i.updateForZ(factorZ);
+         }
+     }
 @@ -373,7 +_,17 @@
      }
  

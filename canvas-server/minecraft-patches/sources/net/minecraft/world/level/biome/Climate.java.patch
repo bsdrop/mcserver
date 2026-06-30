@@ -1,0 +1,50 @@
+--- a/net/minecraft/world/level/biome/Climate.java
++++ b/net/minecraft/world/level/biome/Climate.java
+@@ -418,9 +_,23 @@
+         @VisibleForTesting
+         abstract static class Node<T> {
+             protected final Climate.Parameter[] parameterSpace;
++            // Canvas start - flatten parameter space into primitive min/max arrays for a deref-free distance loop
++            // (Climate$RTree$Node.distance is the biome-search hot path: ~7-dim sum, called per child per node per quart).
++            private final long[] paramMin;
++            private final long[] paramMax;
++            // Canvas end
+ 
+             protected Node(final List<Climate.Parameter> parameterSpace) {
+                 this.parameterSpace = parameterSpace.toArray(new Climate.Parameter[0]);
++                // Canvas start - precompute flattened bounds
++                final int n = this.parameterSpace.length;
++                this.paramMin = new long[n];
++                this.paramMax = new long[n];
++                for (int i = 0; i < n; i++) {
++                    this.paramMin[i] = this.parameterSpace[i].min();
++                    this.paramMax[i] = this.parameterSpace[i].max();
++                }
++                // Canvas end
+             }
+ 
+             protected abstract Climate.RTree.Leaf<T> search(
+@@ -428,13 +_,20 @@
+             );
+ 
+             protected long distance(final long[] target) {
++                // Canvas start - primitive distance loop: no Parameter object deref / method call per dimension.
++                // Bit-exact: Parameter.distance = above>0 ? above : max(below,0); Mth.square(d) = d*d.
++                final long[] min = this.paramMin;
++                final long[] max = this.paramMax;
+                 long distance = 0L;
+-
+                 for (int i = 0; i < 7; i++) {
+-                    distance += Mth.square(this.parameterSpace[i].distance(target[i]));
++                    final long t = target[i];
++                    final long above = t - max[i];
++                    final long below = min[i] - t;
++                    final long d = above > 0L ? above : (below > 0L ? below : 0L);
++                    distance += d * d;
+                 }
+-
+                 return distance;
++                // Canvas end
+             }
+ 
+             @Override
