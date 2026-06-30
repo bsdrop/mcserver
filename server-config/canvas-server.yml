@@ -42,10 +42,9 @@ region-scheduler:
       enable-mid-tick-tasks: true
       # Thread affinity for the AFFINITY scheduler provided by Canvas. By using this, you could
       # pin the threads of region scheduler to cpu cores
-      tick-region-affinity: [
-         ]
+      tick-region-affinity: [0, 1, 2, 3]
       # Enables pinning threads of the AFFINITY region scheduler to cpu cores
-      enable-affinity-scheduler-cpu-affinity: false
+      enable-affinity-scheduler-cpu-affinity: true
    # Amount of time between the end and next start of a region tick where the server will log a
    # warning that the scheduler is overloaded. Can help catch if you need to allocate more
    # threads or help identify deadline missing issues
@@ -187,7 +186,7 @@ logs:
    # The type of time unit to use when comparing how old the file is to the current time
    unit: "DAYS"
    # Logs when a pearl is saved or loaded from Canvas' pearl save rewrite
-   log-ender-pearl-rewrite-actions: true
+   log-ender-pearl-rewrite-actions: false
 enchant-command:
    # Uncaps the max level, allowing you to enchant to any level, even beyond the max
    uncap-max-level: false

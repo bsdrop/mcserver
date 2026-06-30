@@ -80,7 +80,7 @@ misc:
     chat-executor-core-size: -1
     chat-executor-max-size: -1
   client-interaction-leniency-distance: default
-  compression-level: default
+  compression-level: 1
   enable-nether: true
   fix-far-end-terrain-generation: true
   load-permissions-yml-before-plugins: true

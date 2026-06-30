@@ -12,13 +12,10 @@ exec "$JAVA" \
   -XX:+UseZGC \
   -XX:+AlwaysPreTouch \
   -XX:+DisableExplicitGC \
-  -XX:+UseNUMA \
   \
   -XX:SoftMaxHeapSize=6G \
   -XX:ZUncommitDelay=600 \
   \
-  -XX:ConcGCThreads=3 \
-  -XX:+ParallelRefProcEnabled \
   -XX:+UseStringDeduplication \
   \
   -XX:+PerfDisableSharedMem \
