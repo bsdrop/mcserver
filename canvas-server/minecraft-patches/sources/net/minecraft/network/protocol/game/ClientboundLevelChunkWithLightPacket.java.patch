@@ -1,0 +1,24 @@
+--- a/net/minecraft/network/protocol/game/ClientboundLevelChunkWithLightPacket.java
++++ b/net/minecraft/network/protocol/game/ClientboundLevelChunkWithLightPacket.java
+@@ -40,6 +_,21 @@
+         // Paper start - Anti-Xray
+         this(levelChunk, lightEngine, skyChangedLightSectionFilter, blockChangedLightSectionFilter, true);
+     }
++    // Canvas start - reuse cached block-data serialization across players (anti-xray-off path only); light is rebuilt fresh each send
++    public ClientboundLevelChunkWithLightPacket(
++        final LevelChunk levelChunk,
++        final ClientboundLevelChunkPacketData cachedChunkData,
++        final LevelLightEngine lightEngine,
++        final @Nullable BitSet skyChangedLightSectionFilter,
++        final @Nullable BitSet blockChangedLightSectionFilter
++    ) {
++        ChunkPos chunkPos = levelChunk.getPos();
++        this.x = chunkPos.x();
++        this.z = chunkPos.z();
++        this.chunkData = cachedChunkData;
++        this.lightData = new ClientboundLightUpdatePacketData(chunkPos, lightEngine, skyChangedLightSectionFilter, blockChangedLightSectionFilter);
++    }
++    // Canvas end
+     public ClientboundLevelChunkWithLightPacket(
+         final LevelChunk levelChunk,
+         final LevelLightEngine lightEngine,

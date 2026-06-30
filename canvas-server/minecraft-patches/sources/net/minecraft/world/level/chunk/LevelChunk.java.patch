@@ -50,6 +50,35 @@
              this.setBlockEntity(blockEntity);
          }
  
+@@ -244,9 +_,28 @@
+ 
+     @Override
+     public void markUnsaved() {
++        this.canvas$cachedChunkData = null; // Canvas - invalidate cached chunk packet data on any mutation
+         super.markUnsaved(); // Folia - region threading - unsavedListener is not really use
+     }
+ 
++    // Canvas start - cached chunk packet data (block serialization reused across players; invalidated on markUnsaved)
++    private net.minecraft.network.protocol.game.ClientboundLevelChunkPacketData canvas$cachedChunkData;
++
++    /**
++     * Returns the serialized block-data portion of this chunk's network packet, building and caching it
++     * on first use. Only valid for the anti-xray-OFF path (no per-player block modification), where the
++     * serialized bytes are identical for every player. Folia ownership guarantees single-thread access.
++     */
++    public net.minecraft.network.protocol.game.ClientboundLevelChunkPacketData canvas$getCachedChunkData() {
++        net.minecraft.network.protocol.game.ClientboundLevelChunkPacketData data = this.canvas$cachedChunkData;
++        if (data == null) {
++            data = new net.minecraft.network.protocol.game.ClientboundLevelChunkPacketData(this);
++            this.canvas$cachedChunkData = data;
++        }
++        return data;
++    }
++    // Canvas end
++
+     @Override
+     public TickContainerAccess<Block> getBlockTicks() {
+         return this.blockTicks;
 @@ -278,12 +_,18 @@
  
      public BlockState getBlockStateFinal(final int x, final int y, final int z) {

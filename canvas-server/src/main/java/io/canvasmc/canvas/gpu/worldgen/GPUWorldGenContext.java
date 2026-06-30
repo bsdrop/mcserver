@@ -231,44 +231,46 @@ public final class GPUWorldGenContext {
             MemorySegment ctx = MemorySegment.ofAddress(GPUNoiseAccelerator.canvas$clContext());
             MemorySegment errBuf = a.allocate(ValueLayout.JAVA_INT);
 
-            // Allocate GPU buffers
-            MemorySegment bPos = (MemorySegment) GPUNoiseAccelerator.canvas$mhCreateBuffer()
-                .invoke(ctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, posBytes, posMem, errBuf);
-            checkErr(errBuf, "clCreateBuffer pos");
+            // Allocate GPU buffers (released in finally — must not leak on dispatch/read errors)
+            MemorySegment bPos = MemorySegment.NULL, bRes = MemorySegment.NULL;
+            try {
+                bPos = (MemorySegment) GPUNoiseAccelerator.canvas$mhCreateBuffer()
+                    .invoke(ctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, posBytes, posMem, errBuf);
+                checkErr(errBuf, "clCreateBuffer pos");
 
-            MemorySegment bRes = (MemorySegment) GPUNoiseAccelerator.canvas$mhCreateBuffer()
-                .invoke(ctx, CL_MEM_WRITE_ONLY, resBytes, MemorySegment.NULL, errBuf);
-            checkErr(errBuf, "clCreateBuffer res");
+                bRes = (MemorySegment) GPUNoiseAccelerator.canvas$mhCreateBuffer()
+                    .invoke(ctx, CL_MEM_WRITE_ONLY, resBytes, MemorySegment.NULL, errBuf);
+                checkErr(errBuf, "clCreateBuffer res");
 
-            // Set kernel args: positions, results, N
-            setArg(a, 0, ValueLayout.ADDRESS.byteSize(), bPos);
-            setArg(a, 1, ValueLayout.ADDRESS.byteSize(), bRes);
-            setArgInt(a, 2, N);
+                // Set kernel args: positions, results, N
+                setArg(a, 0, ValueLayout.ADDRESS.byteSize(), bPos);
+                setArg(a, 1, ValueLayout.ADDRESS.byteSize(), bRes);
+                setArgInt(a, 2, N);
 
-            // Dispatch
-            MemorySegment globalSize = a.allocate(ValueLayout.JAVA_LONG);
-            globalSize.set(ValueLayout.JAVA_LONG, 0, (long) N);
-            int ndErr = (int) GPUNoiseAccelerator.canvas$mhEnqueueNDRangeKernel()
-                .invoke(clQueue, clKernel, 1, MemorySegment.NULL, globalSize, MemorySegment.NULL,
-                        0, MemorySegment.NULL, MemorySegment.NULL);
-            if (ndErr != CL_SUCCESS) throw new RuntimeException("clEnqueueNDRangeKernel: " + ndErr);
+                // Dispatch
+                MemorySegment globalSize = a.allocate(ValueLayout.JAVA_LONG);
+                globalSize.set(ValueLayout.JAVA_LONG, 0, (long) N);
+                int ndErr = (int) GPUNoiseAccelerator.canvas$mhEnqueueNDRangeKernel()
+                    .invoke(clQueue, clKernel, 1, MemorySegment.NULL, globalSize, MemorySegment.NULL,
+                            0, MemorySegment.NULL, MemorySegment.NULL);
+                if (ndErr != CL_SUCCESS) throw new RuntimeException("clEnqueueNDRangeKernel: " + ndErr);
 
-            // Read results
-            MemorySegment resMem = a.allocate(resBytes);
-            int rdErr = (int) GPUNoiseAccelerator.canvas$mhEnqueueReadBuffer()
-                .invoke(clQueue, bRes, CL_TRUE, 0L, resBytes, resMem, 0, MemorySegment.NULL, MemorySegment.NULL);
-            if (rdErr != CL_SUCCESS) throw new RuntimeException("clEnqueueReadBuffer: " + rdErr);
-            GPUNoiseAccelerator.canvas$mhFinish().invoke(clQueue);
+                // Read results
+                MemorySegment resMem = a.allocate(resBytes);
+                int rdErr = (int) GPUNoiseAccelerator.canvas$mhEnqueueReadBuffer()
+                    .invoke(clQueue, bRes, CL_TRUE, 0L, resBytes, resMem, 0, MemorySegment.NULL, MemorySegment.NULL);
+                if (rdErr != CL_SUCCESS) throw new RuntimeException("clEnqueueReadBuffer: " + rdErr);
+                GPUNoiseAccelerator.canvas$mhFinish().invoke(clQueue);
 
-            // Copy to Java int[]
-            int[] out = new int[N];
-            for (int i = 0; i < N; i++) out[i] = resMem.get(ValueLayout.JAVA_INT, (long)i*4);
+                // Copy to Java int[]
+                int[] out = new int[N];
+                for (int i = 0; i < N; i++) out[i] = resMem.get(ValueLayout.JAVA_INT, (long)i*4);
 
-            // Release GPU buffers
-            GPUNoiseAccelerator.canvas$mhReleaseMemObject().invoke(bPos);
-            GPUNoiseAccelerator.canvas$mhReleaseMemObject().invoke(bRes);
-
-            return out;
+                return out;
+            } finally {
+                releaseClBuffer(bPos);
+                releaseClBuffer(bRes);
+            }
         }
     }
 
@@ -286,6 +288,13 @@ public final class GPUWorldGenContext {
         int err = (int) GPUNoiseAccelerator.canvas$mhSetKernelArg()
             .invoke(clKernel, idx, (long) ValueLayout.JAVA_INT.byteSize(), argBuf);
         if (err != CL_SUCCESS) throw new RuntimeException("clSetKernelArg int[" + idx + "]: " + err);
+    }
+
+    /** Release a CL device buffer if non-null; swallow release errors so they never mask the real exception. */
+    private static void releaseClBuffer(MemorySegment buf) {
+        if (buf == null || buf.equals(MemorySegment.NULL)) return;
+        try { GPUNoiseAccelerator.canvas$mhReleaseMemObject().invoke(buf); }
+        catch (Throwable ignored) {}
     }
 
     private static void checkErr(MemorySegment errBuf, String label) {
@@ -397,24 +406,30 @@ public final class GPUWorldGenContext {
                     posMem.set(ValueLayout.JAVA_INT, (long)(i*3+2)*4, zs[i]);
                 }
                 MemorySegment errBuf = a.allocate(ValueLayout.JAVA_INT);
-                MemorySegment bPos = (MemorySegment) GPUNoiseAccelerator.canvas$mhCreateBuffer().invoke(ctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, (long) n*3*4, posMem, errBuf);
-                MemorySegment bOut = (MemorySegment) GPUNoiseAccelerator.canvas$mhCreateBuffer().invoke(ctx, CL_MEM_WRITE_ONLY, (long) n*8, MemorySegment.NULL, errBuf);
-                setArgS(a, clValueKernel, 0, ValueLayout.ADDRESS.byteSize(), bPos);
-                setArgS(a, clValueKernel, 1, ValueLayout.ADDRESS.byteSize(), bOut);
-                MemorySegment nBuf = a.allocate(ValueLayout.JAVA_INT); nBuf.set(ValueLayout.JAVA_INT, 0, n);
-                GPUNoiseAccelerator.canvas$mhSetKernelArg().invoke(clValueKernel, 2, (long) ValueLayout.JAVA_INT.byteSize(), nBuf);
-                MemorySegment gs = a.allocate(ValueLayout.JAVA_LONG); gs.set(ValueLayout.JAVA_LONG, 0, (long) n);
-                int nd = (int) GPUNoiseAccelerator.canvas$mhEnqueueNDRangeKernel().invoke(clQueue, clValueKernel, 1, MemorySegment.NULL, gs, MemorySegment.NULL, 0, MemorySegment.NULL, MemorySegment.NULL);
-                if (nd != CL_SUCCESS) throw new RuntimeException("computeGrid NDRange: " + nd);
-                MemorySegment outMem = a.allocate((long) n * 8);
-                int rd = (int) GPUNoiseAccelerator.canvas$mhEnqueueReadBuffer().invoke(clQueue, bOut, CL_TRUE, 0L, (long) n*8, outMem, 0, MemorySegment.NULL, MemorySegment.NULL);
-                if (rd != CL_SUCCESS) throw new RuntimeException("computeGrid read: " + rd);
-                GPUNoiseAccelerator.canvas$mhFinish().invoke(clQueue);
-                double[] out = new double[n];
-                for (int i = 0; i < n; i++) out[i] = outMem.get(ValueLayout.JAVA_DOUBLE, (long) i * 8);
-                GPUNoiseAccelerator.canvas$mhReleaseMemObject().invoke(bPos);
-                GPUNoiseAccelerator.canvas$mhReleaseMemObject().invoke(bOut);
-                return out;
+                MemorySegment bPos = MemorySegment.NULL, bOut = MemorySegment.NULL;
+                try {
+                    bPos = (MemorySegment) GPUNoiseAccelerator.canvas$mhCreateBuffer().invoke(ctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, (long) n*3*4, posMem, errBuf);
+                    checkErr(errBuf, "computeGrid clCreateBuffer pos");
+                    bOut = (MemorySegment) GPUNoiseAccelerator.canvas$mhCreateBuffer().invoke(ctx, CL_MEM_WRITE_ONLY, (long) n*8, MemorySegment.NULL, errBuf);
+                    checkErr(errBuf, "computeGrid clCreateBuffer out");
+                    setArgS(a, clValueKernel, 0, ValueLayout.ADDRESS.byteSize(), bPos);
+                    setArgS(a, clValueKernel, 1, ValueLayout.ADDRESS.byteSize(), bOut);
+                    MemorySegment nBuf = a.allocate(ValueLayout.JAVA_INT); nBuf.set(ValueLayout.JAVA_INT, 0, n);
+                    GPUNoiseAccelerator.canvas$mhSetKernelArg().invoke(clValueKernel, 2, (long) ValueLayout.JAVA_INT.byteSize(), nBuf);
+                    MemorySegment gs = a.allocate(ValueLayout.JAVA_LONG); gs.set(ValueLayout.JAVA_LONG, 0, (long) n);
+                    int nd = (int) GPUNoiseAccelerator.canvas$mhEnqueueNDRangeKernel().invoke(clQueue, clValueKernel, 1, MemorySegment.NULL, gs, MemorySegment.NULL, 0, MemorySegment.NULL, MemorySegment.NULL);
+                    if (nd != CL_SUCCESS) throw new RuntimeException("computeGrid NDRange: " + nd);
+                    MemorySegment outMem = a.allocate((long) n * 8);
+                    int rd = (int) GPUNoiseAccelerator.canvas$mhEnqueueReadBuffer().invoke(clQueue, bOut, CL_TRUE, 0L, (long) n*8, outMem, 0, MemorySegment.NULL, MemorySegment.NULL);
+                    if (rd != CL_SUCCESS) throw new RuntimeException("computeGrid read: " + rd);
+                    GPUNoiseAccelerator.canvas$mhFinish().invoke(clQueue);
+                    double[] out = new double[n];
+                    for (int i = 0; i < n; i++) out[i] = outMem.get(ValueLayout.JAVA_DOUBLE, (long) i * 8);
+                    return out;
+                } finally {
+                    releaseClBuffer(bPos);
+                    releaseClBuffer(bOut);
+                }
             }
         } catch (Throwable t) {
             failed = true;

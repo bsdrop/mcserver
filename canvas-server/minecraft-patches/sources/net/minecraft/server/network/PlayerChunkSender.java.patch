@@ -1,0 +1,26 @@
+--- a/net/minecraft/server/network/PlayerChunkSender.java
++++ b/net/minecraft/server/network/PlayerChunkSender.java
+@@ -22,6 +_,8 @@
+ 
+ public class PlayerChunkSender {
+     private static final Logger LOGGER = LogUtils.getLogger();
++    // Canvas - cache serialized chunk block-data and reuse across players (disable: -Dcanvas.chunkPacketCache=false)
++    private static final boolean CACHE_CHUNK_PACKET_DATA = !"false".equalsIgnoreCase(System.getProperty("canvas.chunkPacketCache", "true"));
+     public static final float MIN_CHUNKS_PER_TICK = 0.01F;
+     public static final float MAX_CHUNKS_PER_TICK = 64.0F;
+     private static final float START_CHUNKS_PER_TICK = 9.0F;
+@@ -81,7 +_,13 @@
+     public static void sendChunk(final ServerGamePacketListenerImpl connection, final ServerLevel level, final LevelChunk chunk) { // Paper - rewrite chunk system - public
+         // Paper start - Anti-Xray
+         final boolean shouldModify = level.chunkPacketBlockController.shouldModify(connection.player, chunk);
+-        connection.send(new ClientboundLevelChunkWithLightPacket(chunk, level.getLightEngine(), null, null, shouldModify));
++        // Canvas start - reuse cached block serialization across players when anti-xray is not modifying this chunk
++        if (!shouldModify && CACHE_CHUNK_PACKET_DATA) {
++            connection.send(new ClientboundLevelChunkWithLightPacket(chunk, chunk.canvas$getCachedChunkData(), level.getLightEngine(), null, null));
++        } else {
++            connection.send(new ClientboundLevelChunkWithLightPacket(chunk, level.getLightEngine(), null, null, shouldModify));
++        }
++        // Canvas end
+         // Paper end - Anti-Xray
+         // Paper start - PlayerChunkLoadEvent
+         if (io.papermc.paper.event.packet.PlayerChunkLoadEvent.getHandlerList().getRegisteredListeners().length > 0) {
