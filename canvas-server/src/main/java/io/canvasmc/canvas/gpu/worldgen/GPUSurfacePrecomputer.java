@@ -58,6 +58,12 @@ public final class GPUSurfacePrecomputer {
         final AtomicLong cacheHits    = new AtomicLong();
         final AtomicLong cpuFallbacks = new AtomicLong();
 
+        // Per-RandomState (per-dimension) density grid cache. MUST be per-state: different dimensions
+        // have different cell configs (cellCountY) → different grid sizes; a global chunk-coord-keyed
+        // cache collides across dimensions (overworld 1225 vs nether 196) → wrong-size grid → AIOOBE.
+        final ConcurrentHashMap<Long, double[]> densityCache = new ConcurrentHashMap<>(16384);
+        final ConcurrentHashMap<Long, Boolean> tileInProgress = new ConcurrentHashMap<>();
+
         ContextEntry() { this.state = CompileState.COMPILING; }
     }
 
@@ -95,39 +101,39 @@ public final class GPUSurfacePrecomputer {
     // dispatches, and each tile is computed at most once (tileInProgress dedup). TILE=4 → 16 chunks/
     // dispatch (~3136 pts ≫ 512 crossover). Tune with -Dcanvas.gpu.density.tile.
     private static final int DENSITY_TILE = Math.max(1, Math.min(8, Integer.getInteger("canvas.gpu.density.tile", 4)));
-    private static final int MAX_DENSITY_CACHE = 100_000; // chunk grids (~196 doubles each)
-    static final ConcurrentHashMap<Long, double[]> DENSITY_CACHE = new ConcurrentHashMap<>(16384);
-    private static final ConcurrentHashMap<Long, Boolean> tileInProgress = new ConcurrentHashMap<>();
+    private static final int MAX_DENSITY_CACHE = 100_000; // chunk grids per dimension
 
     /**
      * Returns this chunk's finalDensity cell-corner grid (ordered (ix*nz+iz)*ny+iy, matching
      * GpuGridDensity). On a cache miss, computes the whole aligned TILE×TILE tile in one GPU dispatch
-     * and caches each chunk. Returns null if disabled / not ready / GPU busy / tile being computed
-     * by another worker → CPU fallback.
+     * and caches each chunk. The cache is PER-RandomState (per-dimension) so grid sizes are uniform.
+     * Returns null if disabled / not ready / GPU busy / tile being computed by another worker / size
+     * mismatch → CPU fallback.
      */
     public static double[] computeDensityGrid(RandomState state, int originX, int originZ,
             int cellWidth, int cellHeight, int cellCountXZ, int cellCountY, int cellNoiseMinY) {
         if (!DENSITY_ENABLED) return null;
-        int cx = Math.floorDiv(originX, 16), cz = Math.floorDiv(originZ, 16);
-        long key = ColumnPos.asLong(cx, cz);
-        double[] hit = DENSITY_CACHE.get(key);
-        if (hit != null) return hit;
 
         ContextEntry entry = getOrInitEntry(state); // triggers async compile (incl. value kernel)
         if (entry.state != CompileState.READY) return null;
         GPUWorldGenContext ctx = entry.ctx;
         if (ctx == null || !ctx.hasValueKernel()) return null;
 
+        final int nx = cellCountXZ + 1, nz = cellCountXZ + 1, ny = cellCountY + 1;
+        final int perChunk = nx * nz * ny;
+        int cx = Math.floorDiv(originX, 16), cz = Math.floorDiv(originZ, 16);
+        long key = ColumnPos.asLong(cx, cz);
+        double[] hit = entry.densityCache.get(key);
+        if (hit != null) return hit.length == perChunk ? hit : null; // size guard (defensive)
+
         int baseCx = Math.floorDiv(cx, DENSITY_TILE) * DENSITY_TILE;
         int baseCz = Math.floorDiv(cz, DENSITY_TILE) * DENSITY_TILE;
         long tileKey = ColumnPos.asLong(baseCx, baseCz);
-        if (tileInProgress.putIfAbsent(tileKey, Boolean.TRUE) != null) return null; // another worker → CPU now
+        if (entry.tileInProgress.putIfAbsent(tileKey, Boolean.TRUE) != null) return null; // another worker → CPU now
         try {
-            double[] recheck = DENSITY_CACHE.get(key); // another tile dispatch may have filled it
-            if (recheck != null) return recheck;
+            double[] recheck = entry.densityCache.get(key); // another tile dispatch may have filled it
+            if (recheck != null) return recheck.length == perChunk ? recheck : null;
 
-            final int nx = cellCountXZ + 1, nz = cellCountXZ + 1, ny = cellCountY + 1;
-            final int perChunk = nx * nz * ny;
             final int nChunks = DENSITY_TILE * DENSITY_TILE;
             final int total = nChunks * perChunk;
             int[] xs = new int[total], ys = new int[total], zs = new int[total];
@@ -152,18 +158,18 @@ public final class GPUSurfacePrecomputer {
             double[] all = ctx.computeGrid(xs, ys, zs, total);
             if (all == null) return null; // GPU busy → CPU for this chunk
 
-            if (DENSITY_CACHE.size() > MAX_DENSITY_CACHE) DENSITY_CACHE.clear(); // crude bound
+            if (entry.densityCache.size() > MAX_DENSITY_CACHE) entry.densityCache.clear(); // crude bound
             double[] result = null;
             for (int c = 0; c < nChunks; c++) {
                 double[] g = new double[perChunk];
                 System.arraycopy(all, c * perChunk, g, 0, perChunk);
-                DENSITY_CACHE.putIfAbsent(keys[c], g);
+                entry.densityCache.putIfAbsent(keys[c], g);
                 if (keys[c] == key) result = g;
             }
             gpuDensityBatches.incrementAndGet();
             return result;
         } finally {
-            tileInProgress.remove(tileKey);
+            entry.tileInProgress.remove(tileKey);
         }
     }
 
@@ -184,8 +190,8 @@ public final class GPUSurfacePrecomputer {
                     DENSITY_TILE * DENSITY_TILE);
             long n = gpuDensityChunks.incrementAndGet();
             if (n % 256 == 0) // ongoing visibility: confirms GPU is generating chunk density
-                LOGGER.info("[CanvasGPU-Surface] GPU density: {} chunks ({} GPU batch dispatches, cache={})",
-                    n, gpuDensityBatches.get(), DENSITY_CACHE.size());
+                LOGGER.info("[CanvasGPU-Surface] GPU density: {} chunks via {} GPU tile-batch dispatches",
+                    n, gpuDensityBatches.get());
         } else {
             if (reportedGateFail.compareAndSet(false, true))
                 LOGGER.warn("[CanvasGPU-Surface] GPU density gate FAILED (corner mismatch) — using CPU. Indexing bug? (logged once)");
@@ -372,8 +378,7 @@ public final class GPUSurfacePrecomputer {
 
     public static void clearAllCaches() {
         SURFACE_CACHE.clear();
-        DENSITY_CACHE.clear();
-        entries.clear();
+        entries.clear(); // per-entry densityCache/tileInProgress go with the entries
     }
 
     /** Print current statistics to log. */
