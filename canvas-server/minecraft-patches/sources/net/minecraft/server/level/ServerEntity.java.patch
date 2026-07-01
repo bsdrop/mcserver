@@ -1,5 +1,48 @@
 --- a/net/minecraft/server/level/ServerEntity.java
 +++ b/net/minecraft/server/level/ServerEntity.java
+@@ -96,6 +_,33 @@
+     }
+     // Paper end - fix desync when a player is added to the tracker
+ 
++    // Canvas start - distance-scaled tracking: entities far from all their trackers keep being SENT (stay visible)
++    // but their periodic position sync fires less often (fewer move packets). Lets you widen the tracking range
++    // cheaply. Only the periodic sync is throttled — needsSync / dirty-data / forced resyncs still send immediately.
++    private static final boolean CANVAS_TRACK_THROTTLE = !"false".equalsIgnoreCase(System.getProperty("canvas.entityTrackThrottle", "true"));
++    private static final double CANVAS_TRACK_START = Double.parseDouble(System.getProperty("canvas.entityTrackThrottle.startBlocks", "48"));
++    private static final double CANVAS_TRACK_STEP  = Double.parseDouble(System.getProperty("canvas.entityTrackThrottle.stepBlocks", "32"));
++    private static final int    CANVAS_TRACK_MAXMULT = Integer.getInteger("canvas.entityTrackThrottle.maxMult", 4);
++    private static final double CANVAS_TRACK_START_SQ = CANVAS_TRACK_START * CANVAS_TRACK_START;
++
++    private int canvas$distanceUpdateInterval() {
++        if (!CANVAS_TRACK_THROTTLE || this.trackedPlayers.isEmpty() || this.entity instanceof ServerPlayer) {
++            return this.updateInterval;
++        }
++        final double ex = this.entity.getX(), ey = this.entity.getY(), ez = this.entity.getZ();
++        double nearestSq = Double.MAX_VALUE;
++        for (final net.minecraft.server.network.ServerPlayerConnection c : this.trackedPlayers) {
++            final double d = c.getPlayer().distanceToSqr(ex, ey, ez);
++            if (d < nearestSq) nearestSq = d;
++        }
++        if (nearestSq <= CANVAS_TRACK_START_SQ) return this.updateInterval;
++        int mult = 1 + (int) ((Math.sqrt(nearestSq) - CANVAS_TRACK_START) / CANVAS_TRACK_STEP);
++        if (mult > CANVAS_TRACK_MAXMULT) mult = CANVAS_TRACK_MAXMULT;
++        else if (mult < 1) mult = 1;
++        return this.updateInterval * mult;
++    }
++    // Canvas end
++
+     public void sendChanges() {
+         // Paper start - optimise collisions
+         if (((ca.spottedleaf.moonrise.patches.chunk_system.entity.ChunkSystemEntity)this.entity).moonrise$isHardColliding()) {
+@@ -142,7 +_,7 @@
+             this.entity.syncPosition = false;
+         }
+ 
+-        if (this.forceStateResync || this.tickCount % this.updateInterval == 0 || this.entity.needsSync || this.entity.getEntityData().isDirty()) { // Paper - fix desync when a player is added to the tracker
++        if (this.forceStateResync || this.tickCount % this.canvas$distanceUpdateInterval() == 0 || this.entity.needsSync || this.entity.getEntityData().isDirty()) { // Paper - fix desync when a player is added to the tracker // Canvas - distance-scaled periodic sync
+             byte yRotn = Mth.packDegrees(this.entity.getYRot());
+             byte xRotn = Mth.packDegrees(this.entity.getXRot());
+             boolean shouldSendRotation = Math.abs(yRotn - this.lastSentYRot) >= 1 || Math.abs(xRotn - this.lastSentXRot) >= 1;
 @@ -169,7 +_,7 @@
                  boolean positionChanged = (vec3_dx * vec3_dx + vec3_dy * vec3_dy + vec3_dz * vec3_dz) >= 7.62939453125E-6D;
                  // Paper end - reduce allocation of Vec3D here

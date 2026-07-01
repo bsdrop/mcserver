@@ -1,5 +1,61 @@
 --- a/net/minecraft/world/entity/Mob.java
 +++ b/net/minecraft/world/entity/Mob.java
+@@ -218,15 +_,53 @@
+     public void inactiveTick() {
+         super.inactiveTick();
+         if (!this.aware) return; // Paper - Do not tick AI for inactive unaware mobs
+-        if (this.goalSelector.inactiveTick()) {
++        final int rate = this.canvas$dabRate(); // Canvas - DAB: distance-scaled goal-selection rate for inactive mobs
++        if (this.goalSelector.inactiveTick(rate)) {
+             this.goalSelector.tick();
+         }
+-        if (this.targetSelector.inactiveTick()) {
++        if (this.targetSelector.inactiveTick(rate)) {
+             this.targetSelector.tick();
+         }
+     }
+     // Paper end
+ 
++    // Canvas start - DAB (Dynamic Activation of Brain, concept from Pufferfish, GPL-3.0): inactive mobs far from
++    // players tick their goal SELECTION less often. Only the (already-inactive) goal re-selection is throttled —
++    // running goals still execute, the brain (customServerAiStep) is untouched, and the max rate is capped LOW so
++    // mobs stay responsive enough to not drown/misbehave (avoids Pufferfish issue #58). Cached, recomputed ~every 20t.
++    private static final boolean CANVAS_DAB = !"false".equalsIgnoreCase(System.getProperty("canvas.dab", "true"));
++    private static final double CANVAS_DAB_START = Double.parseDouble(System.getProperty("canvas.dab.startBlocks", "32"));
++    private static final double CANVAS_DAB_STEP  = Double.parseDouble(System.getProperty("canvas.dab.stepBlocks", "24"));
++    private static final int    CANVAS_DAB_MAX   = Math.max(3, Integer.getInteger("canvas.dab.maxRate", 6));
++    private static final double CANVAS_DAB_SCAN  = Double.parseDouble(System.getProperty("canvas.dab.scanBlocks", "256"));
++    private static final double CANVAS_DAB_START_SQ = CANVAS_DAB_START * CANVAS_DAB_START;
++    private static final double CANVAS_DAB_STEP_SQ  = CANVAS_DAB_STEP * CANVAS_DAB_STEP;
++    private int canvas$dabRate = 3;
++    private int canvas$dabStamp = Integer.MIN_VALUE;
++
++    private int canvas$dabRate() {
++        if (!CANVAS_DAB) return 3;
++        if (this.canvas$dabStamp == Integer.MIN_VALUE || (this.tickCount - this.canvas$dabStamp) >= 20) {
++            this.canvas$dabStamp = this.tickCount;
++            int rate;
++            final net.minecraft.world.entity.player.Player p = this.level().getNearestPlayer(this, CANVAS_DAB_SCAN);
++            if (p == null) {
++                rate = CANVAS_DAB_MAX; // no player within scan range → throttle hardest (nobody watching)
++            } else {
++                final double distSq = p.distanceToSqr(this);
++                if (distSq <= CANVAS_DAB_START_SQ) {
++                    rate = 3; // vanilla rate near players
++                } else {
++                    rate = 3 + (int) ((distSq - CANVAS_DAB_START_SQ) / CANVAS_DAB_STEP_SQ);
++                    if (rate > CANVAS_DAB_MAX) rate = CANVAS_DAB_MAX;
++                }
++            }
++            this.canvas$dabRate = rate;
++        }
++        return this.canvas$dabRate;
++    }
++    // Canvas end
++
+     public MoveControl getMoveControl() {
+         return this.getControlledVehicle() instanceof Mob riding ? riding.getMoveControl() : this.moveControl;
+     }
 @@ -362,6 +_,7 @@
              this.resetAmbientSoundTime();
              this.playAmbientSound();
