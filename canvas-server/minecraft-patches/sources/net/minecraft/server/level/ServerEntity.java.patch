@@ -9,8 +9,8 @@
 +    // cheaply. Only the periodic sync is throttled — needsSync / dirty-data / forced resyncs still send immediately.
 +    private static final boolean CANVAS_TRACK_THROTTLE = !"false".equalsIgnoreCase(System.getProperty("canvas.entityTrackThrottle", "true"));
 +    private static final double CANVAS_TRACK_START = Double.parseDouble(System.getProperty("canvas.entityTrackThrottle.startBlocks", "48"));
-+    private static final double CANVAS_TRACK_STEP  = Double.parseDouble(System.getProperty("canvas.entityTrackThrottle.stepBlocks", "32"));
-+    private static final int    CANVAS_TRACK_MAXMULT = Integer.getInteger("canvas.entityTrackThrottle.maxMult", 4);
++    private static final double CANVAS_TRACK_STEP  = Double.parseDouble(System.getProperty("canvas.entityTrackThrottle.stepBlocks", "24"));
++    private static final int    CANVAS_TRACK_MAXMULT = Integer.getInteger("canvas.entityTrackThrottle.maxMult", 8);
 +    private static final double CANVAS_TRACK_START_SQ = CANVAS_TRACK_START * CANVAS_TRACK_START;
 +
 +    private int canvas$distanceUpdateInterval() {
