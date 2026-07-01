@@ -1,0 +1,13 @@
+--- a/src/main/java/org/spigotmc/SpigotWorldConfig.java
++++ b/src/main/java/org/spigotmc/SpigotWorldConfig.java
+@@ -197,8 +_,8 @@
+         this.log("Item Despawn Rate: " + this.itemDespawnRate);
+     }
+ 
+-    public int animalActivationRange = 32;
+-    public int monsterActivationRange = 32;
++    public int animalActivationRange = 48; // Canvas - default toward appearance (mobs animate a bit farther) over perf
++    public int monsterActivationRange = 48; // Canvas - default toward appearance over perf
+     public int raiderActivationRange = 64;
+     public int miscActivationRange = 16;
+     public int flyingMonsterActivationRange = 32;

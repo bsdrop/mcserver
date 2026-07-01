@@ -105,7 +105,7 @@ public final class GPUWorldGenContext {
             // one-time verify proves the kernel correct for all points → no per-chunk gate needed at
             // generation time (that gate cost 3 full finalDensity tree-walks per chunk on CPU, partly
             // defeating the offload). Nether/End whose finalDensity isn't bit-exact → verify fails → CPU.
-            if (Boolean.getBoolean("canvas.gpu.density.enabled")) {
+            if (!"false".equalsIgnoreCase(System.getProperty("canvas.gpu.density.enabled", "true"))) { // Canvas - default ON
                 try {
                     DensityFunction fd = state.router().finalDensity();
                     String vsrc = DFCLCompiler.compileValue(fd);
@@ -116,7 +116,7 @@ public final class GPUWorldGenContext {
                             if (c.verifyValueKernel(fd, 8192)) {
                                 LOGGER.info("[CanvasGPU-WorldGen] finalDensity value kernel VERIFIED (8192/8192) + READY — GPU full-chunk density enabled");
                                 // Optional: GPU per-block interpolation (offload MC's CPU NoiseInterpolator).
-                                if (Boolean.getBoolean("canvas.gpu.interp")) {
+                                if (!"false".equalsIgnoreCase(System.getProperty("canvas.gpu.interp", "true"))) { // Canvas - default ON
                                     try {
                                         MemorySegment ik = buildKernel(INTERP_SRC, "interp");
                                         if (ik != null && c.verifyInterpKernel(ik, 0)) {

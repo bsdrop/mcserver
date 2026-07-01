@@ -89,11 +89,11 @@ public final class GPUSurfacePrecomputer {
     // Default OFF: GPU surface only logs bit-exact verify result; generation stays pure CPU.
     // Flip to true (-Dcanvas.gpu.surface.enabled=true) only after verify PASSES in logs.
     public static final boolean SURFACE_ENABLED =
-        Boolean.getBoolean("canvas.gpu.surface.enabled");
+        !"false".equalsIgnoreCase(System.getProperty("canvas.gpu.surface.enabled", "true")); // Canvas - default ON (GPU-gated + verify-gated → CPU fallback if unavailable/not bit-exact)
 
     // Full-chunk GPU density (Task #6). Off by default — opt in with -Dcanvas.gpu.density.enabled=true.
     public static final boolean DENSITY_ENABLED =
-        Boolean.getBoolean("canvas.gpu.density.enabled");
+        !"false".equalsIgnoreCase(System.getProperty("canvas.gpu.density.enabled", "true")); // Canvas - default ON
 
     // Tile-aligned batching: chunks are grouped into fixed TILE×TILE tiles (aligned to multiples of
     // TILE). A miss computes the whole containing tile in ONE GPU dispatch (TILE²×cornersPerChunk
@@ -103,7 +103,7 @@ public final class GPUSurfacePrecomputer {
     // dispatch (~3136 pts ≫ 512 crossover). Tune with -Dcanvas.gpu.density.tile.
     private static final int DENSITY_TILE = Math.max(1, Math.min(8, Integer.getInteger("canvas.gpu.density.tile", 4)));
     private static final int MAX_DENSITY_CACHE = 100_000; // chunk grids per dimension
-    private static final boolean INTERP_ENABLED = Boolean.getBoolean("canvas.gpu.interp");
+    private static final boolean INTERP_ENABLED = !"false".equalsIgnoreCase(System.getProperty("canvas.gpu.interp", "true")); // Canvas - default ON
 
     /**
      * GPU per-block trilinear interpolation of a cell-corner grid (offloads MC's CPU NoiseInterpolator).
