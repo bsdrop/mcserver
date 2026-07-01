@@ -3282,10 +3282,10 @@ index 0000000000000000000000000000000000000000..074fe7a907b0bdfbf44cd94d8307e9b4
 +import java.util.function.Consumer;
 diff --git a/io/canvasmc/canvas/threadedregions/scheduler/AffinitySchedulerThreadPool.java b/io/canvasmc/canvas/threadedregions/scheduler/AffinitySchedulerThreadPool.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..c6de7b764a168dafa8ed9390fa0b8c3c275a4916
+index 0000000000000000000000000000000000000000..5576346ca2b330a4289d5384065c0eb0aefb59e5
 --- /dev/null
 +++ b/io/canvasmc/canvas/threadedregions/scheduler/AffinitySchedulerThreadPool.java
-@@ -0,0 +1,707 @@
+@@ -0,0 +1,716 @@
 +package io.canvasmc.canvas.threadedregions.scheduler;
 +
 +import ca.spottedleaf.common.util.TimeUtil;
@@ -3360,7 +3360,7 @@ index 0000000000000000000000000000000000000000..c6de7b764a168dafa8ed9390fa0b8c3c
 +    private final boolean enableWorkStealing;
 +    private final boolean enableIntermediateTasks;
 +
-+    private final java.util.concurrent.atomic.AtomicInteger nextSteal = new java.util.concurrent.atomic.AtomicInteger(0);
++    private final AtomicInteger nextSteal = new AtomicInteger(0);
 +
 +    private volatile boolean halted;
 +
@@ -3679,7 +3679,16 @@ index 0000000000000000000000000000000000000000..c6de7b764a168dafa8ed9390fa0b8c3c
 +    @Override
 +    public void notifyTasks(final @NonNull SchedulableTick task) {
 +        if (task.state == null) return;
-+        ((ScheduledState) task.state).markedWithTasks.set(true);
++        final ScheduledState state = (ScheduledState) task.state;
++        final boolean changed = state.markedWithTasks.compareAndSet(false, true);
++
++        // try wake owner if present. if the thread is parking to wait
++        // until next tick, we can wake and have it run intermediate tasks
++
++        final TickThreadRunner owner = state.ownedBy;
++        if (changed && owner != null) {
++            LockSupport.unpark(owner.getRunnerThread());
++        }
 +    }
 +
 +    public static final class ScheduledState {
@@ -3691,7 +3700,7 @@ index 0000000000000000000000000000000000000000..c6de7b764a168dafa8ed9390fa0b8c3c
 +
 +        private final AtomicInteger scheduled = new AtomicInteger();
 +        private AffinitySchedulerThreadPool schedulerOwnedBy;
-+        private TickThreadRunner ownedBy;
++        private volatile TickThreadRunner ownedBy;
 +        private final AtomicBoolean markedWithTasks = new AtomicBoolean(false);
 +
 +        public boolean compareHasTasks() {
@@ -9414,7 +9423,7 @@ index 0000000000000000000000000000000000000000..070760eb24bda6db6ee0561d07a1d9e3
 +}
 diff --git a/io/papermc/paper/threadedregions/TickRegionScheduler.java b/io/papermc/paper/threadedregions/TickRegionScheduler.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..ceee6f1a1b2a60580f806923ab3b9eeed91467f0
+index 0000000000000000000000000000000000000000..36c49f8bc6e0b43a38362fb37a77fba480f4c247
 --- /dev/null
 +++ b/io/papermc/paper/threadedregions/TickRegionScheduler.java
 @@ -0,0 +1,720 @@
@@ -9968,8 +9977,8 @@ index 0000000000000000000000000000000000000000..ceee6f1a1b2a60580f806923ab3b9eee
 +            final long cpuStart = MEASURE_CPU_TIME ? THREAD_MX_BEAN.getCurrentThreadCpuTime() : 0L;
 +            final long tickStart = System.nanoTime();
 +            // Canvas start - region threading
-+            ScheduledHandleTickState tickState = getTickManager();
-+            long deadlineFuture = tickState.tickStart(tickStart);
++            final ScheduledHandleTickState tickState = getTickManager();
++            final long deadlineFuture = tickState.tickStart(tickStart);
 +            // Canvas end - region threading
 +
 +            // use max(), don't assume that tickStart >= scheduledStart
