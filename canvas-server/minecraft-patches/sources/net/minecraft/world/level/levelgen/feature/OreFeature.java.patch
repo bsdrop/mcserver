@@ -1,0 +1,13 @@
+--- a/net/minecraft/world/level/levelgen/feature/OreFeature.java
++++ b/net/minecraft/world/level/levelgen/feature/OreFeature.java
+@@ -142,7 +_,9 @@
+                                                         int sectionRelativeZ = SectionPos.sectionRelative(z);
+                                                         BlockState blockState = section.getBlockState(sectionRelativeX, sectionRelativeY, sectionRelativeZ);
+ 
+-                                                        for (OreConfiguration.TargetBlockState targetState : config.targetStates) {
++                                                        // Canvas - indexed loop over the immutable target list: no per-ore-block Iterator alloc (ImmutableCollections$ListItr.next was a worldgen hot leaf)
++                                                        for (int ti = 0, tn = config.targetStates.size(); ti < tn; ti++) {
++                                                            OreConfiguration.TargetBlockState targetState = config.targetStates.get(ti);
+                                                             if (canPlaceOre(blockState, sectionGetter::getBlockState, random, config, targetState, orePos)) {
+                                                                 section.setBlockState(
+                                                                     sectionRelativeX, sectionRelativeY, sectionRelativeZ, targetState.state, false
