@@ -1,0 +1,57 @@
+--- a/net/minecraft/world/level/chunk/LevelChunkSection.java
++++ b/net/minecraft/world/level/chunk/LevelChunkSection.java
+@@ -206,19 +_,29 @@
+             final int paletteSize = palette.getSize();
+             final net.minecraft.util.BitStorage storage = data.storage();
+ 
+-            final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<it.unimi.dsi.fastutil.shorts.ShortArrayList> counts;
++            // Canvas start - only collect per-block coordinates for randomly-ticking palette entries (the rest need
++            // just the count) so the dominant non-ticking blocks don't build+grow a full coordinate list per section.
++            final boolean[] collectCoords = new boolean[paletteSize];
++            for (int i = 0; i < paletteSize; ++i) {
++                collectCoords[i] = palette.valueFor(i).isRandomlyTicking();
++            }
++            final int[] countsOut = new int[paletteSize];
++            final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<it.unimi.dsi.fastutil.shorts.ShortArrayList> tickingCoords;
+             if (paletteSize == 1) {
+-                counts = new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<>(1);
+-                counts.put(0, FULL_LIST);
++                countsOut[0] = FULL_LIST.size();
++                tickingCoords = new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<>(1);
++                if (collectCoords[0]) {
++                    tickingCoords.put(0, FULL_LIST);
++                }
+             } else {
+-                counts = ((ca.spottedleaf.moonrise.patches.block_counting.BlockCountingBitStorage)storage).moonrise$countEntries();
++                tickingCoords = ((ca.spottedleaf.moonrise.patches.block_counting.BlockCountingBitStorage)storage).moonrise$countEntries(collectCoords, countsOut);
+             }
+ 
+-            for (final java.util.Iterator<it.unimi.dsi.fastutil.ints.Int2ObjectMap.Entry<it.unimi.dsi.fastutil.shorts.ShortArrayList>> iterator = counts.int2ObjectEntrySet().fastIterator(); iterator.hasNext();) {
+-                final it.unimi.dsi.fastutil.ints.Int2ObjectMap.Entry<it.unimi.dsi.fastutil.shorts.ShortArrayList> entry = iterator.next();
+-                final int paletteIdx = entry.getIntKey();
+-                final it.unimi.dsi.fastutil.shorts.ShortArrayList coordinates = entry.getValue();
+-                final int paletteCount = coordinates.size();
++            for (int paletteIdx = 0; paletteIdx < paletteSize; ++paletteIdx) {
++                final int paletteCount = countsOut[paletteIdx];
++                if (paletteCount == 0) {
++                    continue;
++                }
+ 
+                 final BlockState state = palette.valueFor(paletteIdx);
+ 
+@@ -232,6 +_,7 @@
+                 this.nonEmptyBlockCount += (short)paletteCount;
+                 if (state.isRandomlyTicking()) {
+                     this.tickingBlockCount += (short) paletteCount;
++                    final it.unimi.dsi.fastutil.shorts.ShortArrayList coordinates = tickingCoords.get(paletteIdx);
+                     final short[] raw = coordinates.elements();
+                     final int rawLen = raw.length;
+ 
+@@ -254,6 +_,7 @@
+                     }
+                 }
+             }
++            // Canvas end
+         }
+         // Paper end - block counting
+     }

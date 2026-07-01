@@ -1,0 +1,13 @@
+--- a/ca/spottedleaf/moonrise/patches/block_counting/BlockCountingBitStorage.java
++++ b/ca/spottedleaf/moonrise/patches/block_counting/BlockCountingBitStorage.java
+@@ -7,4 +_,10 @@
+ 
+     public Int2ObjectOpenHashMap<ShortArrayList> moonrise$countEntries();
+ 
++    // Canvas - single-pass variant: fills countsOut[paletteIdx] with the count for EVERY palette index, but only
++    // builds/returns coordinate lists for indices where collectCoords[paletteIdx] is true. recalcBlockCounts only
++    // needs coordinates for randomly-ticking blocks, so the dominant non-ticking blocks (stone/air) no longer build
++    // and grow a full 4096-element ShortArrayList just to read its .size(). Counts remain exactly correct.
++    public Int2ObjectOpenHashMap<ShortArrayList> moonrise$countEntries(boolean[] collectCoords, int[] countsOut);
++
+ }

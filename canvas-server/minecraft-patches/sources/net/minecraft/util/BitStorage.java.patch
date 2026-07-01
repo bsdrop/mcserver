@@ -1,0 +1,29 @@
+--- a/net/minecraft/util/BitStorage.java
++++ b/net/minecraft/util/BitStorage.java
+@@ -37,5 +_,26 @@
+ 
+         return ret;
+     }
++
++    // Canvas - default single-pass counts + coords-only-for-collected variant (generic fallback via get())
++    @Override
++    public default it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<it.unimi.dsi.fastutil.shorts.ShortArrayList> moonrise$countEntries(final boolean[] collectCoords, final int[] countsOut) {
++        final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<it.unimi.dsi.fastutil.shorts.ShortArrayList> ret = new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<>();
++        final int size = this.getSize();
++        final int nOut = countsOut.length;
++        final int nCollect = collectCoords.length;
++        for (int index = 0; index < size; ++index) {
++            final int paletteIdx = this.get(index);
++            if (paletteIdx < nOut) {
++                countsOut[paletteIdx]++;
++            }
++            if (paletteIdx < nCollect && collectCoords[paletteIdx]) {
++                ret.computeIfAbsent(paletteIdx, (final int key) -> {
++                    return new it.unimi.dsi.fastutil.shorts.ShortArrayList();
++                }).add((short)index);
++            }
++        }
++        return ret;
++    }
+     // Paper end - block counting
+ }

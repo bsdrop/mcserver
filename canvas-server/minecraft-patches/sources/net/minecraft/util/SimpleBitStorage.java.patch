@@ -1,0 +1,72 @@
+--- a/net/minecraft/util/SimpleBitStorage.java
++++ b/net/minecraft/util/SimpleBitStorage.java
+@@ -458,6 +_,69 @@
+             return ret;
+         }
+     }
++
++    // Canvas - single-pass: count EVERY palette index into countsOut, but only build coordinate lists for indices
++    // flagged in collectCoords (randomly-ticking blocks). Removes the ShortArrayList build+grow for the dominant
++    // non-ticking blocks (stone/air) whose coordinates recalcBlockCounts never reads. Counts are exact & identical.
++    @Override
++    public final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<it.unimi.dsi.fastutil.shorts.ShortArrayList> moonrise$countEntries(final boolean[] collectCoords, final int[] countsOut) {
++        final int valuesPerLong = this.valuesPerLong;
++        final int bits = this.bits;
++        final long mask = (1L << bits) - 1L;
++        final int size = this.size;
++        final int nOut = countsOut.length;
++        final int nCollect = collectCoords.length;
++
++        final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<it.unimi.dsi.fastutil.shorts.ShortArrayList> ret =
++            new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<>();
++
++        if (bits <= 6) {
++            final it.unimi.dsi.fastutil.shorts.ShortArrayList[] byId = new it.unimi.dsi.fastutil.shorts.ShortArrayList[1 << bits];
++            int index = 0;
++            for (long value : this.data) {
++                int li = 0;
++                do {
++                    final int paletteIdx = (int)(value & mask);
++                    value >>= bits;
++                    ++li;
++                    final short coord = (short)index++;
++                    if (paletteIdx < nOut) {
++                        countsOut[paletteIdx]++;
++                    }
++                    if (paletteIdx < nCollect && collectCoords[paletteIdx]) {
++                        it.unimi.dsi.fastutil.shorts.ShortArrayList coords = byId[paletteIdx];
++                        if (coords == null) {
++                            coords = new it.unimi.dsi.fastutil.shorts.ShortArrayList(64);
++                            byId[paletteIdx] = coords;
++                            ret.put(paletteIdx, coords);
++                        }
++                        coords.add(coord);
++                    }
++                } while (li < valuesPerLong && index < size);
++            }
++        } else {
++            int index = 0;
++            for (long value : this.data) {
++                int li = 0;
++                do {
++                    final int paletteIdx = (int)(value & mask);
++                    value >>= bits;
++                    ++li;
++                    final short coord = (short)index++;
++                    if (paletteIdx < nOut) {
++                        countsOut[paletteIdx]++;
++                    }
++                    if (paletteIdx < nCollect && collectCoords[paletteIdx]) {
++                        ret.computeIfAbsent(paletteIdx, (final int key) -> {
++                            return new it.unimi.dsi.fastutil.shorts.ShortArrayList(64);
++                        }).add(coord);
++                    }
++                } while (li < valuesPerLong && index < size);
++            }
++        }
++
++        return ret;
++    }
+     // Paper end - block counting
+ 
+     public static class InitializationException extends RuntimeException {
