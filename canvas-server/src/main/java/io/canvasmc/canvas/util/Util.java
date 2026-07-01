@@ -38,35 +38,25 @@ import static net.kyori.adventure.text.Component.text;
 public class Util {
     public static final ClientV2 CANVAS_CLIENT = ClientV2.getClientFor("canvas");
 
-    private static final ThreadLocal<XoroshiroRandomSource> xoroshiro = ThreadLocal.withInitial(() -> new XoroshiroRandomSource(0L, 0L));
-    private static final ThreadLocal<SingleThreadedRandomSource> simple = ThreadLocal.withInitial(() -> new SingleThreadedRandomSource(0L));
+    private static final ThreadLocal<XoroshiroRandomSource> XOROSHIRO = ThreadLocal.withInitial(() -> new XoroshiroRandomSource(0L, 0L));
+    private static final ThreadLocal<SingleThreadedRandomSource> SIMPLE = ThreadLocal.withInitial(() -> new SingleThreadedRandomSource(0L));
 
-    private static @NonNull String scale(long nanos) {
-        if (nanos < 1_000L)
-            return nanos + "ns";
-
-        if (nanos < 1_000_000_000L) {
-            long ms = nanos / 1_000_000L;
-            return ms + "ms";
-        }
-
-        final long seconds = nanos / 1_000_000_000L;
-
-        if (seconds < 60)
-            return seconds + "s";
-
-        if (seconds < 3_600)
-            return plural(seconds / 60, "minute");
-
-        if (seconds < 86_400)
-            return plural(seconds / 3_600, "hour");
-
-        return plural(seconds / 86_400, "day");
+    @NonNull
+    @Contract(pure = true)
+    private static String pluralDecimal(final double value, final String unit) {
+        return truncateToSecondDecimal(value) + " " + unit + (value == 1 ? "" : "s");
     }
 
+    @NonNull
     @Contract(pure = true)
-    private static @NonNull String plural(long value, String unit) {
+    private static String pluralWhole(final long value, final String unit) {
         return value + " " + unit + (value == 1 ? "" : "s");
+    }
+
+    @NonNull
+    @Contract(pure = true)
+    private static String truncateToSecondDecimal(final double value) {
+        return String.format("%.2f", value);
     }
 
     public static void derive(PositionalRandomFactory deriver, RandomSource random, int x, int y, int z) {
@@ -86,16 +76,17 @@ public class Util {
 
     public static RandomSource getThreadLocalRandom(PositionalRandomFactory deriver) {
         if (deriver instanceof XoroshiroRandomSource.XoroshiroPositionalRandomFactory) {
-            return xoroshiro.get();
+            return XOROSHIRO.get();
         }
         if (deriver instanceof LegacyRandomSource.LegacyPositionalRandomFactory) {
-            return simple.get();
+            return SIMPLE.get();
         }
         throw new IllegalArgumentException();
     }
 
+    @NonNull
     @Contract("null -> fail")
-    public static @NonNull RandomSource getRandom(PositionalRandomFactory deriver) {
+    public static RandomSource getRandom(PositionalRandomFactory deriver) {
         if (deriver instanceof XoroshiroRandomSource.XoroshiroPositionalRandomFactory) {
             return new XoroshiroRandomSource(0L, 0L);
         }
@@ -157,7 +148,8 @@ public class Util {
         }
     }
 
-    public static @NonNull Component gradient(final String textContent, final @Nullable Consumer<Style.Builder> style, final TextColor... colors) {
+    @NonNull
+    public static Component gradient(final String textContent, final @Nullable Consumer<Style.Builder> style, final TextColor... colors) {
         final Gradient gradient = new Gradient(colors);
         final TextComponent.Builder builder = text();
         if (style != null) {
@@ -219,7 +211,8 @@ public class Util {
      *
      * @return the capitalized text
      */
-    public static @NonNull String capitalize(final @NonNull String text) {
+    @NonNull
+    public static String capitalize(final @NonNull String text) {
         if (text.isEmpty()) {
             return text;
         }
@@ -234,7 +227,8 @@ public class Util {
      *
      * @return the text in camel case
      */
-    public static @NonNull String snakeToCamel(final @NonNull String text) {
+    @NonNull
+    public static String snakeToCamel(final @NonNull String text) {
         if (text.isEmpty()) {
             return text;
         }
@@ -251,13 +245,62 @@ public class Util {
         return result.toString();
     }
 
-    public static @NonNull String formatScheduled(long currentNanos, long targetNanos) {
+    @NonNull
+    public static String formatScheduled(long currentNanos, long targetNanos) {
         final long diffNanos = targetNanos - currentNanos;
         final boolean past = diffNanos < 0;
         final long abs = Math.abs(diffNanos);
-        final String amount = scale(abs);
+        final String amount = formatNanosToLargestWholeUnit(abs);
 
         return past ? amount + " ago" : "in " + amount;
+    }
+
+    @NonNull
+    public static String formatNanosToLargestDecimalUnit(final long nanos) {
+        if (nanos < 1_000L)
+            return truncateToSecondDecimal(nanos) + "ns";
+
+        if (nanos < 1_000_000_000L) {
+            double ms = nanos / 1_000_000D;
+            return truncateToSecondDecimal(ms) + "ms";
+        }
+
+        final double seconds = nanos / 1_000_000_000D;
+
+        if (seconds < 60)
+            return truncateToSecondDecimal(seconds) + "s";
+
+        if (seconds < 3_600)
+            return pluralDecimal(seconds / 60, "minute");
+
+        if (seconds < 86_400)
+            return pluralDecimal(seconds / 3_600, "hour");
+
+        return pluralDecimal(seconds / 86_400, "day");
+    }
+
+    @NonNull
+    public static String formatNanosToLargestWholeUnit(final long nanos) {
+        if (nanos < 1_000L)
+            return nanos + "ns";
+
+        if (nanos < 1_000_000_000L) {
+            long ms = nanos / 1_000_000L;
+            return ms + "ms";
+        }
+
+        final long seconds = nanos / 1_000_000_000L;
+
+        if (seconds < 60)
+            return seconds + "s";
+
+        if (seconds < 3_600)
+            return pluralWhole(seconds / 60, "minute");
+
+        if (seconds < 86_400)
+            return pluralWhole(seconds / 3_600, "hour");
+
+        return pluralWhole(seconds / 86_400, "day");
     }
 
     public static final class Gradient {
@@ -299,7 +342,8 @@ public class Util {
             this.phase = this.phase * sectorLength;
         }
 
-        public @NonNull TextColor nextColor() {
+        @NonNull
+        public TextColor nextColor() {
             if (this.factorStep * this.index > 1) {
                 this.colorIndex++;
                 this.index = 0;
@@ -319,7 +363,8 @@ public class Util {
             }
         }
 
-        private @NonNull TextColor interpolate(final @NonNull TextColor color1, final @NonNull TextColor color2, final float factor) {
+        @NonNull
+        private TextColor interpolate(final @NonNull TextColor color1, final @NonNull TextColor color2, final float factor) {
             return TextColor.color(
                 Math.round(color1.red() + factor * (color2.red() - color1.red())),
                 Math.round(color1.green() + factor * (color2.green() - color1.green())),

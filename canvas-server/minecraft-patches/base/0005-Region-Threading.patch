@@ -2331,10 +2331,10 @@ index 0000000000000000000000000000000000000000..1b5647828279c1a6e07101eb27eb66d9
 +}
 diff --git a/io/canvasmc/canvas/threadedregions/entities/EnderPearls.java b/io/canvasmc/canvas/threadedregions/entities/EnderPearls.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..8607bace1c319abf0be56536886b4182011be092
+index 0000000000000000000000000000000000000000..848a399439f0b86902f0f626e0eeb40fb1d9dabb
 --- /dev/null
 +++ b/io/canvasmc/canvas/threadedregions/entities/EnderPearls.java
-@@ -0,0 +1,220 @@
+@@ -0,0 +1,239 @@
 +package io.canvasmc.canvas.threadedregions.entities;
 +
 +import ca.spottedleaf.concurrentutil.util.Priority;
@@ -2352,6 +2352,7 @@ index 0000000000000000000000000000000000000000..8607bace1c319abf0be56536886b4182
 +import java.util.concurrent.ConcurrentHashMap;
 +import java.util.concurrent.CopyOnWriteArrayList;
 +import java.util.function.Function;
++import io.papermc.paper.threadedregions.RegionShutdownThread;
 +import net.minecraft.nbt.CompoundTag;
 +import net.minecraft.resources.Identifier;
 +import net.minecraft.server.MinecraftServer;
@@ -2370,6 +2371,7 @@ index 0000000000000000000000000000000000000000..8607bace1c319abf0be56536886b4182
 +import net.minecraft.world.level.storage.TagValueInput;
 +import net.minecraft.world.level.storage.TagValueOutput;
 +import net.minecraft.world.level.storage.ValueInput;
++import org.apache.commons.lang3.mutable.MutableBoolean;
 +import org.jetbrains.annotations.Contract;
 +import org.jspecify.annotations.NullMarked;
 +import org.slf4j.Logger;
@@ -2402,22 +2404,32 @@ index 0000000000000000000000000000000000000000..8607bace1c319abf0be56536886b4182
 +
 +    public EnderPearls(final Map<UUID, List<Pearl>> pearls) {
 +        this.pearls = new ConcurrentHashMap<>(pearls);
++        setDirty(); // the data may be populated with unsaved data
 +    }
 +
 +    @Override
 +    public boolean isDirty() {
-+        // we must assume always dirty
-+        return true;
++        // assume dirty in shutdown to ensure that all data is saved correctly
++        return super.isDirty() || RegionShutdownThread.isShuttingDown();
 +    }
 +
 +    public void spawnPearls(final ServerPlayer player) {
++        final MutableBoolean setDirty = new MutableBoolean(false);
++
++        // if the map has the player UUID, we should spawn pearls
 +        pearls.computeIfPresent(player.getUUID(), (_, enderPearls) -> {
 +            for (final Pearl enderPearl : new ArrayList<>(enderPearls)) {
 +                enderPearl.spawn();
 +                enderPearls.remove(enderPearl);
 +            }
++            setDirty.setTrue();
 +            return null;
 +        });
++
++        // we should only set dirty if we spawned pearls
++        if (setDirty.isTrue()) {
++            setDirty();
++        }
 +    }
 +
 +    public void addPearl(final UUID uuid, final ThrownEnderpearl thrownEnderpearl) {
@@ -2429,16 +2441,23 @@ index 0000000000000000000000000000000000000000..8607bace1c319abf0be56536886b4182
 +            LOGGER.warn("Trying to add removed ({}) ender pearl, skipping", thrownEnderpearl.getRemovalReason(), new Throwable());
 +            return;
 +        }
-+        List<Pearl> pearls = pearls().computeIfAbsent(uuid, (ignored) -> new CopyOnWriteArrayList<>());
-+        Pearl encoded = Pearl.of(thrownEnderpearl);
-+        pearls.remove(encoded); // remove if it's already in the list, we don't want duplicates
-+        pearls.add(encoded);
++
++        final List<Pearl> pearlsForUUID = pearls.computeIfAbsent(uuid, (ignored) -> new CopyOnWriteArrayList<>());
++        final Pearl encoded = Pearl.of(thrownEnderpearl);
++
++        // remove if it's already in the list, we don't want duplicates
++        pearlsForUUID.remove(encoded);
++        pearlsForUUID.add(encoded);
++
++        // mark dirty, we added a pearl(even if the pearl was present already)
++        setDirty();
++
 +        if (GlobalConfiguration.getInstance().logs.logEnderPearlRewriteActions) {
 +            LOGGER.info("Saved pearl at [{}] for {}", thrownEnderpearl.blockPosition().toShortString(), uuid);
 +        }
 +    }
 +
-+    public Map<UUID, List<Pearl>> pearls() {
++    private Map<UUID, List<Pearl>> pearls() {
 +        return pearls;
 +    }
 +
@@ -4757,26 +4776,33 @@ index 8e03419df1469c6fecfaa82fcb319a58635b39f3..b3c466fd7cb6810995f95bed66a86f2b
          // If 'k' has the highest level of all neighbors, then the power level of this
 diff --git a/io/papermc/paper/threadedregions/FoliaWatchdogThread.java b/io/papermc/paper/threadedregions/FoliaWatchdogThread.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..bec34595ea1266e92d8cf10e5014ab59cc4c3f3a
+index 0000000000000000000000000000000000000000..6a6d46b55bd25103638fbb84de781ff337079df7
 --- /dev/null
 +++ b/io/papermc/paper/threadedregions/FoliaWatchdogThread.java
-@@ -0,0 +1,106 @@
+@@ -0,0 +1,147 @@
 +package io.papermc.paper.threadedregions;
 +
 +import com.mojang.logging.LogUtils;
++import io.canvasmc.canvas.util.Util;
++import io.papermc.paper.ServerBuildInfo;
 +import io.papermc.paper.threadedregions.TickRegionScheduler.RegionScheduleHandle;
 +import java.lang.management.ManagementFactory;
++import java.lang.management.MonitorInfo;
++import java.lang.management.OperatingSystemMXBean;
++import java.lang.management.RuntimeMXBean;
++import java.lang.management.ThreadInfo;
 +import java.util.ArrayList;
 +import java.util.LinkedHashSet;
 +import java.util.List;
 +import java.util.concurrent.TimeUnit;
 +import org.bukkit.Bukkit;
++import org.jspecify.annotations.NonNull;
 +import org.slf4j.Logger;
-+import org.spigotmc.WatchdogThread;
 +
 +public final class FoliaWatchdogThread extends Thread {
 +
-+    private static final Logger LOGGER = LogUtils.getLogger();
++    private static final Logger LOGGER = LogUtils.getClassLogger();
++    public static final String BREAK_LINE = "----------------------------------------------------------"; // Canvas - more detailed watchdog output
 +
 +    public static final class RunningTick {
 +
@@ -4811,7 +4837,7 @@ index 0000000000000000000000000000000000000000..bec34595ea1266e92d8cf10e5014ab59
 +                Thread.sleep(1000L);
 +            } catch (final InterruptedException _) {}
 +
-+            if (RegionShutdownThread.canvas$isShutdown()) {
++            if (RegionShutdownThread.isShuttingDown()) {
 +                return;
 +            }
 +
@@ -4836,7 +4862,7 @@ index 0000000000000000000000000000000000000000..bec34595ea1266e92d8cf10e5014ab59
 +                }
 +                tick.lastPrint = now;
 +
-+                final String totalElapsedS = String.format("%.2f", (now - tick.start) / 1.0E9); // Canvas - region threading
++                final String totalElapsedS = Util.formatNanosToLargestDecimalUnit(now - tick.start); // Canvas - region threading
 +
 +                if (tick.handle instanceof TickRegions.ConcreteRegionTickHandle region) {
 +                    LOGGER.error("Tick region located in world '{}' around chunk '{}' has not responded in {}s:",
@@ -4847,13 +4873,47 @@ index 0000000000000000000000000000000000000000..bec34595ea1266e92d8cf10e5014ab59
 +                    LOGGER.error("Global region has not responded in {}s:", totalElapsedS);
 +                }
 +
-+                WatchdogThread.dumpThread(
-+                    ManagementFactory.getThreadMXBean().getThreadInfo(tick.thread.threadId(), Integer.MAX_VALUE),
-+                    Bukkit.getServer().getLogger()
-+                );
++                // Canvas start - more detailed watchdog output
++                dumpVersionInfo();
++                dumpThread(ManagementFactory.getThreadMXBean().getThreadInfo(tick.thread.threadId(), Integer.MAX_VALUE));
++                // Canvas end - more detailed watchdog output
 +            }
 +        }
 +    }
++    // Canvas start - more detailed watchdog output
++
++    private static void dumpThread(final @NonNull ThreadInfo threadInfo) {
++        //noinspection LoggingSimilarMessage
++        LOGGER.error(BREAK_LINE);
++        LOGGER.error("Current Thread: {}", threadInfo.getThreadName());
++        LOGGER.error("\tPID: {} | Suspended: {} | Native: {} | State: {}",
++            threadInfo.getThreadId(),
++            threadInfo.isSuspended(),
++            threadInfo.isInNative(),
++            threadInfo.getThreadState()
++        );
++
++        final MonitorInfo[] lockedMonitors = threadInfo.getLockedMonitors();
++        if (lockedMonitors.length > 0) {
++            LOGGER.error("\tThread is waiting on {} monitor(s):", lockedMonitors.length);
++            for (final MonitorInfo lockedMonitor : lockedMonitors) {
++                LOGGER.error("\t\tLocked on:{}", lockedMonitor.getLockedStackFrame());
++            }
++        }
++
++        LOGGER.error("\tStack:");
++        for (final StackTraceElement stackElement : threadInfo.getStackTrace()) {
++            LOGGER.error("\t\t{}", stackElement);
++        }
++    }
++
++    private static void dumpVersionInfo() {
++        //noinspection LoggingSimilarMessage
++        LOGGER.error(BREAK_LINE);
++        LOGGER.error("- DO NOT REPORT THIS TO PAPER/FOLIA, REPORT TO {} INSTEAD -", ServerBuildInfo.buildInfo().brandName().toUpperCase());
++        LOGGER.error("Version: {}", Bukkit.getVersion());
++    }
++    // Canvas end - more detailed watchdog output
 +
 +    public void addTick(final RunningTick tick) {
 +        synchronized (this.ticks) {
@@ -4869,7 +4929,7 @@ index 0000000000000000000000000000000000000000..bec34595ea1266e92d8cf10e5014ab59
 +}
 diff --git a/io/papermc/paper/threadedregions/RegionShutdownThread.java b/io/papermc/paper/threadedregions/RegionShutdownThread.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..462de8ce6739a3ae505d1b8ea54f3fb1be753c75
+index 0000000000000000000000000000000000000000..ab5778800ef164036316053d7acf07a17ed12374
 --- /dev/null
 +++ b/io/papermc/paper/threadedregions/RegionShutdownThread.java
 @@ -0,0 +1,356 @@
@@ -5043,10 +5103,10 @@ index 0000000000000000000000000000000000000000..462de8ce6739a3ae505d1b8ea54f3fb1
 +    }
 +    // Canvas start - region threading
 +
-+    private static volatile boolean IS_IN_SHUTDOWN = false;
++    private static volatile boolean IS_SHUTTING_DOWN = false;
 +
-+    public static boolean canvas$isShutdown() {
-+        return IS_IN_SHUTDOWN;
++    public static boolean isShuttingDown() {
++        return IS_SHUTTING_DOWN;
 +    }
 +
 +    private void savePlayers() {
@@ -5146,7 +5206,7 @@ index 0000000000000000000000000000000000000000..462de8ce6739a3ae505d1b8ea54f3fb1
 +
 +    @Override
 +    public void run() {
-+        IS_IN_SHUTDOWN = true; // Canvas - region threading
++        IS_SHUTTING_DOWN = true; // Canvas - region threading
 +        // await scheduler termination
 +        LOGGER.info("Awaiting scheduler termination for 60s...");
 +        if (TickRegions.getScheduler().halt(true, TimeUnit.SECONDS.toNanos(60L))) {
@@ -5473,10 +5533,10 @@ index 0000000000000000000000000000000000000000..ccfbec958e65b8cccabd5d6421ab9de5
 +}
 diff --git a/io/papermc/paper/threadedregions/RegionizedServer.java b/io/papermc/paper/threadedregions/RegionizedServer.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..9d46130b72ada11d1c95a3abcd6c3f5d8fc4a5b5
+index 0000000000000000000000000000000000000000..46941a5579d6d636112a7b8fff4c28fb2f5ce1b9
 --- /dev/null
 +++ b/io/papermc/paper/threadedregions/RegionizedServer.java
-@@ -0,0 +1,619 @@
+@@ -0,0 +1,635 @@
 +package io.papermc.paper.threadedregions;
 +
 +import ca.spottedleaf.common.util.TimeUtil;
@@ -5494,7 +5554,6 @@ index 0000000000000000000000000000000000000000..9d46130b72ada11d1c95a3abcd6c3f5d
 +import java.util.concurrent.CompletableFuture;
 +import java.util.concurrent.CopyOnWriteArrayList;
 +import java.util.concurrent.atomic.AtomicBoolean;
-+import java.util.concurrent.atomic.AtomicLong;
 +import java.util.function.BooleanSupplier;
 +import net.minecraft.CrashReport;
 +import net.minecraft.ReportedException;
@@ -5521,6 +5580,7 @@ index 0000000000000000000000000000000000000000..9d46130b72ada11d1c95a3abcd6c3f5d
 +import net.minecraft.world.level.saveddata.maps.MapIndex;
 +import net.minecraft.world.level.saveddata.maps.MapItemSavedData;
 +import net.minecraft.world.scores.ScoreboardSaveData;
++import org.apache.commons.lang3.mutable.MutableLong;
 +import org.bukkit.Bukkit;
 +import org.jspecify.annotations.NonNull;
 +import org.slf4j.Logger;
@@ -5793,7 +5853,7 @@ index 0000000000000000000000000000000000000000..9d46130b72ada11d1c95a3abcd6c3f5d
 +    }
 +    // Canvas start - region threading
 +
-+    private static final AtomicLong LAST_GLOBAL_AUTOSAVE = new AtomicLong(System.nanoTime());
++    private static final MutableLong LAST_GLOBAL_AUTOSAVE = new MutableLong(System.nanoTime());
 +
 +    // note: not every saved data type is thread-safe, only a few things are thread-safe
 +    //       due to specific design of these reimplementations. these are listed in the
@@ -5814,14 +5874,16 @@ index 0000000000000000000000000000000000000000..9d46130b72ada11d1c95a3abcd6c3f5d
 +        ensureGlobalTickThread("Cannot save global data async");
 +
 +        final MinecraftServer server = MinecraftServer.getServer();
++        final io.canvasmc.canvas.GlobalConfiguration.Autosave autosaveConfig =
++            io.canvasmc.canvas.GlobalConfiguration.getInstance().autosave;
 +
-+        final int autoSavePeriod = server.autosavePeriod;
-+        if (autoSavePeriod <= 0 && !force) return;
-+        final long periodNanos = autoSavePeriod * TickRegionScheduler.getTimeBetweenTicks();
++        final long periodNanos = io.canvasmc.canvas.GlobalConfiguration.AUTOSAVE_SPAN.getValue().asNanoSpan();
++        if (periodNanos <= 0 && !force) return;
 +        final long currTime = System.nanoTime();
-+        final long last = LAST_GLOBAL_AUTOSAVE.get();
++        final long last = LAST_GLOBAL_AUTOSAVE.longValue();
 +
-+        if (force || ((currTime - last) > periodNanos && LAST_GLOBAL_AUTOSAVE.compareAndSet(last, currTime))) {
++        if (force || ((currTime - last) > periodNanos)) {
++            LAST_GLOBAL_AUTOSAVE.setValue(currTime);
 +
 +            // needs
 +            // pearls - our rewrite
@@ -5839,17 +5901,25 @@ index 0000000000000000000000000000000000000000..9d46130b72ada11d1c95a3abcd6c3f5d
 +                final ArrayList<Class<? extends SavedData>> toSave = new ArrayList<>();
 +
 +                // both of these are SWMR, only mutatable on the global tick
-+                toSave.add(ScoreboardSaveData.class);
-+                toSave.add(Stopwatches.class);
++                if (autosaveConfig.autosaveScoreboards) {
++                    toSave.add(ScoreboardSaveData.class);
++                }
++                if (autosaveConfig.autosaveStopwatches) {
++                    toSave.add(Stopwatches.class);
++                }
 +
 +                // our pearl rewrite is threadsafe
-+                toSave.add(EnderPearls.class);
++                if (autosaveConfig.autosavePearls) {
++                    toSave.add(EnderPearls.class);
++                }
 +
 +                // made threadsafe by Canvas
-+                toSave.add(CustomBossEvents.class);
++                if (autosaveConfig.autosaveCustomBossEvents) {
++                    toSave.add(CustomBossEvents.class);
++                }
 +
 +                // only should be saved globally if affects all worlds
-+                if (GlobalConfiguration.get().time.affectsAllWorlds) {
++                if (autosaveConfig.autosaveTime && GlobalConfiguration.get().time.affectsAllWorlds) {
 +                    toSave.add(ServerClockManager.class);
 +                }
 +
@@ -5868,11 +5938,11 @@ index 0000000000000000000000000000000000000000..9d46130b72ada11d1c95a3abcd6c3f5d
 +    public void autosaveSafeWorldData(final boolean force, final boolean sync, final ServerLevel level) {
 +        ensureGlobalTickThread("Cannot save global world data async");
 +
-+        final MinecraftServer server = MinecraftServer.getServer();
++        final io.canvasmc.canvas.GlobalConfiguration.Autosave autosaveConfig =
++            io.canvasmc.canvas.GlobalConfiguration.getInstance().autosave;
 +
-+        final int autoSavePeriod = server.autosavePeriod;
-+        if (autoSavePeriod <= 0 && !force) return;
-+        final long periodNanos = autoSavePeriod * TickRegionScheduler.getTimeBetweenTicks();
++        final long periodNanos = io.canvasmc.canvas.GlobalConfiguration.AUTOSAVE_SPAN.getValue().asNanoSpan();
++        if (periodNanos <= 0 && !force) return;
 +        final long currTime = System.nanoTime();
 +        final long last = level.lastMapAutoSave;
 +
@@ -5893,11 +5963,13 @@ index 0000000000000000000000000000000000000000..9d46130b72ada11d1c95a3abcd6c3f5d
 +                final ArrayList<Class<? extends SavedData>> toSave = new ArrayList<>();
 +
 +                // maps is represented in 2 data types, the index and the item
-+                toSave.add(MapItemSavedData.class);
-+                toSave.add(MapIndex.class);
++                if (autosaveConfig.autosaveMaps) {
++                    toSave.add(MapItemSavedData.class);
++                    toSave.add(MapIndex.class);
++                }
 +
 +                // only should be autosaved here if worlds have independent time
-+                if (!GlobalConfiguration.get().time.affectsAllWorlds) {
++                if (autosaveConfig.autosaveTime && !GlobalConfiguration.get().time.affectsAllWorlds) {
 +                    toSave.add(ServerClockManager.class);
 +                }
 +
@@ -5906,10 +5978,14 @@ index 0000000000000000000000000000000000000000..9d46130b72ada11d1c95a3abcd6c3f5d
 +
 +                // folia already only ticks this on the global tick and both canvas
 +                // and folia have thread checks against modifying this data async, so this is fine
-+                toSave.add(WeatherData.class);
++                if (autosaveConfig.autosaveWeather) {
++                    toSave.add(WeatherData.class);
++                }
 +                // already made threadsafe from folia, just needed the codec adjusted to copy the
 +                // backing map to prevent exceptions or torn read/write issues
-+                toSave.add(GameRuleMap.class);
++                if (autosaveConfig.autosaveGamerules) {
++                    toSave.add(GameRuleMap.class);
++                }
 +
 +                // note: the dragon fight is autosaved on the region owning the fight in question.
 +                //       this is because this is specific per-dimension and is also region-specific
@@ -9338,10 +9414,10 @@ index 0000000000000000000000000000000000000000..070760eb24bda6db6ee0561d07a1d9e3
 +}
 diff --git a/io/papermc/paper/threadedregions/TickRegionScheduler.java b/io/papermc/paper/threadedregions/TickRegionScheduler.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..adeff722f9ebeef96c8bee0efd5bad54f89e961e
+index 0000000000000000000000000000000000000000..ceee6f1a1b2a60580f806923ab3b9eeed91467f0
 --- /dev/null
 +++ b/io/papermc/paper/threadedregions/TickRegionScheduler.java
-@@ -0,0 +1,721 @@
+@@ -0,0 +1,720 @@
 +package io.papermc.paper.threadedregions;
 +
 +import ca.spottedleaf.common.time.Schedule;
@@ -9459,7 +9535,6 @@ index 0000000000000000000000000000000000000000..adeff722f9ebeef96c8bee0efd5bad54
 +            public Thread newThread(final @NonNull Runnable run) {
 +                final Thread ret = new TickThreadRunner(this.threadGroup, run, "Folia Region Scheduler Thread #" + this.idGenerator.getAndIncrement());
 +                ret.setUncaughtExceptionHandler(TickRegionScheduler.this::uncaughtException);
-+                ret.setPriority(8); // Canvas - bump priority to match main thread in Paper
 +                return ret;
 +            }
 +        };
@@ -12557,7 +12632,7 @@ index 144c18c08bf8f03d907b97f968aa171a9fbf997f..be9fdca704391f8d77b87b4d75e67bb6
          }
      }
 diff --git a/net/minecraft/server/MinecraftServer.java b/net/minecraft/server/MinecraftServer.java
-index 5044a4221f2946026c3a03b9d3a4719d7c532b45..e5a62fc04ead4b012aa4c3a641ab44b7028ce122 100644
+index 5044a4221f2946026c3a03b9d3a4719d7c532b45..8bea36b4f71164a5be1cfb969816ae59b4c02839 100644
 --- a/net/minecraft/server/MinecraftServer.java
 +++ b/net/minecraft/server/MinecraftServer.java
 @@ -208,7 +208,6 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
@@ -13077,7 +13152,8 @@ index 5044a4221f2946026c3a03b9d3a4719d7c532b45..e5a62fc04ead4b012aa4c3a641ab44b7
 +        final boolean fullSave = this.autosavePeriod > 0 && io.papermc.paper.threadedregions.RegionizedServer.getCurrentTick() % this.autosavePeriod == 0; // Folia - region threading
          try {
              this.isSaving = true;
-             if (playerSaveInterval > 0) {
+-            if (playerSaveInterval > 0) {
++            if (io.canvasmc.canvas.GlobalConfiguration.getInstance().autosave.autosavePlayers && playerSaveInterval > 0) { // Canvas - region threading
                  this.playerList.saveAll(playerSaveInterval);
              }
 -            if (fullSave) {
@@ -13604,7 +13680,7 @@ index eeb2f88723b37bb3cada04bf3098dd46f0ed7316..9a21de639f124e1450ee59b2aced7523
          this.setFrozen(this.previousIsFrozen);
          this.server.onTickRateChanged();
 diff --git a/net/minecraft/server/bossevents/CustomBossEvent.java b/net/minecraft/server/bossevents/CustomBossEvent.java
-index f55f22b3d3d765d790ac7bb85727846de01b57d6..703fae51a5185afaaf47503ac492325594fc9bf2 100644
+index f55f22b3d3d765d790ac7bb85727846de01b57d6..89041fc8953c8c3d8659e0f77b2062ae3ec2c69c 100644
 --- a/net/minecraft/server/bossevents/CustomBossEvent.java
 +++ b/net/minecraft/server/bossevents/CustomBossEvent.java
 @@ -40,6 +40,7 @@ public class CustomBossEvent extends ServerBossEvent {
@@ -13669,78 +13745,23 @@ index f55f22b3d3d765d790ac7bb85727846de01b57d6..703fae51a5185afaaf47503ac4923255
      }
  
      public final Component getDisplayName() {
-@@ -101,60 +112,21 @@ public class CustomBossEvent extends ServerBossEvent {
-     }
+@@ -104,6 +115,7 @@ public class CustomBossEvent extends ServerBossEvent {
+         Set<UUID> toRemove = Sets.newHashSet();
+         Set<ServerPlayer> toAdd = Sets.newHashSet();
  
-     public boolean setPlayers(final Collection<ServerPlayer> players) {
--        Set<UUID> toRemove = Sets.newHashSet();
--        Set<ServerPlayer> toAdd = Sets.newHashSet();
-+        // Canvas start - region threading
++        synchronized (playerLock) { // Canvas - region threading
+         for (UUID uuid : this.players) {
+             boolean found = false;
  
--        for (UUID uuid : this.players) {
--            boolean found = false;
-+        // to be completely blunt, this doesn't matter. if anything,
-+        // when this function is executed, it will flicker the bossbar
-+        // once for any players in both the before and after sets
- 
--            for (ServerPlayer player : players) {
--                if (player.getUUID().equals(uuid)) {
--                    found = true;
--                    break;
--                }
-+        synchronized (playerLock) {
-+            this.removeAllPlayers();
-+            for (final ServerPlayer player : players) {
-+                addPlayer(player);
-             }
--
--            if (!found) {
--                toRemove.add(uuid);
--            }
--        }
--
--        for (ServerPlayer player : players) {
--            boolean found = false;
--
--            for (UUID uuid : this.players) {
--                if (player.getUUID().equals(uuid)) {
--                    found = true;
--                    break;
--                }
--            }
--
--            if (!found) {
--                toAdd.add(player);
--            }
--        }
--
--        for (UUID uuid : toRemove) {
--            for (ServerPlayer player : this.getPlayers()) {
--                if (player.getUUID().equals(uuid)) {
--                    this.removePlayer(player);
--                    break;
--                }
--            }
--
--            this.players.remove(uuid);
--        }
--
--        for (ServerPlayer player : toAdd) {
--            this.addPlayer(player);
--        }
--
--        boolean playersChanged = !toRemove.isEmpty() || !toAdd.isEmpty();
--        if (playersChanged) {
--            this.setDirty();
+@@ -148,6 +160,7 @@ public class CustomBossEvent extends ServerBossEvent {
+         for (ServerPlayer player : toAdd) {
+             this.addPlayer(player);
          }
++        } // Canvas - region threading
  
--        return playersChanged;
-+        return true;
-+        // Canvas end - region threading
-     }
- 
-     public static CustomBossEvent load(final UUID id, final Identifier customId, final CustomBossEvent.Packed packed, final Runnable setDirty) {
-@@ -172,6 +144,7 @@ public class CustomBossEvent extends ServerBossEvent {
+         boolean playersChanged = !toRemove.isEmpty() || !toAdd.isEmpty();
+         if (playersChanged) {
+@@ -172,6 +185,7 @@ public class CustomBossEvent extends ServerBossEvent {
      }
  
      public CustomBossEvent.Packed pack() {
@@ -13748,7 +13769,7 @@ index f55f22b3d3d765d790ac7bb85727846de01b57d6..703fae51a5185afaaf47503ac4923255
          return new CustomBossEvent.Packed(
              this.getName(),
              this.isVisible(),
-@@ -184,12 +157,15 @@ public class CustomBossEvent extends ServerBossEvent {
+@@ -184,12 +198,15 @@ public class CustomBossEvent extends ServerBossEvent {
              this.shouldCreateWorldFog(),
              Set.copyOf(this.players)
          );
@@ -21741,7 +21762,7 @@ index e84e243f35b09691d03e9a9cf3de0c093b1d5cfb..46983eb8ac670464c9ade84be21529a6
              }
              // Spigot end
 diff --git a/net/minecraft/server/network/ServerGamePacketListenerImpl.java b/net/minecraft/server/network/ServerGamePacketListenerImpl.java
-index 4ea2718f48dbddd1a2343aad88873ad540eb4117..36d13a141060f4fd81485e9bf5c87e32d8b16f82 100644
+index 4ea2718f48dbddd1a2343aad88873ad540eb4117..2dcfc4557ee75c802df8a1160bf888561ea7e0ff 100644
 --- a/net/minecraft/server/network/ServerGamePacketListenerImpl.java
 +++ b/net/minecraft/server/network/ServerGamePacketListenerImpl.java
 @@ -301,10 +301,10 @@ public class ServerGamePacketListenerImpl
@@ -22051,7 +22072,7 @@ index 4ea2718f48dbddd1a2343aad88873ad540eb4117..36d13a141060f4fd81485e9bf5c87e32
          // CraftBukkit start - async chat
          // SPIGOT-3638
 -        if (this.server.isStopped()) {
-+        if (io.papermc.paper.threadedregions.RegionShutdownThread.canvas$isShutdown()) { // Canvas - region threading
++        if (io.papermc.paper.threadedregions.RegionShutdownThread.isShuttingDown()) { // Canvas - region threading
              return;
          }
          // CraftBukkit end
@@ -29872,8 +29893,21 @@ index f05ab5fdab4cb587974e2864e859e49375f8165e..afecd66784ed57949b54032a1d6a5f44
          }
      }
  
+diff --git a/net/minecraft/world/level/storage/LevelStorageSource.java b/net/minecraft/world/level/storage/LevelStorageSource.java
+index 6f24eb34e0ecc2b03371c585a9538e9337a2295a..0dc70356eba5ea022e0991a81e11c9fe5812e926 100644
+--- a/net/minecraft/world/level/storage/LevelStorageSource.java
++++ b/net/minecraft/world/level/storage/LevelStorageSource.java
+@@ -460,7 +460,7 @@ public class LevelStorageSource {
+         private DirectoryLock lock;
+         private final LevelStorageSource.LevelDirectory levelDirectory;
+         private final String levelId;
+-        private final Map<LevelResource, Path> resources = Maps.newHashMap();
++        private final Map<LevelResource, Path> resources = Maps.newConcurrentMap(); // Canvas - region threading - accessed by multiple threads, use concurrent equivalent
+ 
+         private LevelStorageAccess(final String levelId, final Path path) throws IOException {
+             this.levelId = levelId;
 diff --git a/net/minecraft/world/level/storage/SavedDataStorage.java b/net/minecraft/world/level/storage/SavedDataStorage.java
-index f359e53024019f35aaa5cd8477da708bda2fc57a..b2ede5da90eba150e2afa89350274e8b2f7850e4 100644
+index f359e53024019f35aaa5cd8477da708bda2fc57a..65bb86910f333ee41aec2347a1a9ce87dc644ffc 100644
 --- a/net/minecraft/world/level/storage/SavedDataStorage.java
 +++ b/net/minecraft/world/level/storage/SavedDataStorage.java
 @@ -40,7 +40,7 @@ import org.slf4j.Logger;
@@ -29973,7 +30007,7 @@ index f359e53024019f35aaa5cd8477da708bda2fc57a..b2ede5da90eba150e2afa89350274e8b
      }
  
      public CompoundTag readTagFromDisk(final Path dataFile, final DataFixTypes type, final int newVersion) throws IOException {
-@@ -143,6 +182,61 @@ public class SavedDataStorage implements AutoCloseable {
+@@ -143,6 +182,64 @@ public class SavedDataStorage implements AutoCloseable {
          return gzip;
      }
  
@@ -29986,6 +30020,9 @@ index f359e53024019f35aaa5cd8477da708bda2fc57a..b2ede5da90eba150e2afa89350274e8b
 +
 +    public final CompletableFuture<?> saveSpecific(final java.util.function.Supplier<List<Class<? extends SavedData>>> classTypesSupplier) {
 +        final List<Class<? extends SavedData>> classTypes = classTypesSupplier.get();
++        if (classTypes.isEmpty()) {
++            return CompletableFuture.completedFuture(null);
++        }
 +    // Canvas end - region threading
 +        Map<SavedDataType<?>, CompoundTag> savedData = new HashMap<>();
 +        RegistryOps<Tag> registryOps = this.registries.createSerializationContext(NbtOps.INSTANCE);
@@ -30035,7 +30072,7 @@ index f359e53024019f35aaa5cd8477da708bda2fc57a..b2ede5da90eba150e2afa89350274e8b
      public CompletableFuture<?> scheduleSave() {
          if (this.closed) {
              throw new IllegalStateException("Trying to schedule save when SavedDataStorage is already closed");
-@@ -189,8 +283,9 @@ public class SavedDataStorage implements AutoCloseable {
+@@ -189,8 +286,9 @@ public class SavedDataStorage implements AutoCloseable {
          Map<SavedDataType<?>, CompoundTag> tagsToSave = new Object2ObjectArrayMap<>();
          RegistryOps<Tag> ops = this.registries.createSerializationContext(NbtOps.INSTANCE);
          this.cache.forEach((type, optional) -> optional.filter(SavedData::isDirty).ifPresent(data -> {
@@ -30046,7 +30083,7 @@ index f359e53024019f35aaa5cd8477da708bda2fc57a..b2ede5da90eba150e2afa89350274e8b
          }));
          return tagsToSave;
      }
-@@ -198,7 +293,9 @@ public class SavedDataStorage implements AutoCloseable {
+@@ -198,7 +296,9 @@ public class SavedDataStorage implements AutoCloseable {
      private <T extends SavedData> CompoundTag encodeUnchecked(final SavedDataType<T> type, final SavedData data, final RegistryOps<Tag> ops) {
          Codec<T> codec = type.codec();
          CompoundTag tag = new CompoundTag();
@@ -30482,7 +30519,7 @@ index 2bdbb8451974f0b8d6e94d390ac735f4ccffd954..a7a3329ecf0d08b126e3715e4f3bcca8
  
      @Retention(RetentionPolicy.CLASS)
 diff --git a/net/minecraft/world/scores/Scoreboard.java b/net/minecraft/world/scores/Scoreboard.java
-index 4a15851bda30c918c58c96d2cb98b74f30db396c..e6a98c9f8e0d7706090d23120b5566c7904e8373 100644
+index 4a15851bda30c918c58c96d2cb98b74f30db396c..86f2162041543226ae42908806559b5b45635653 100644
 --- a/net/minecraft/world/scores/Scoreboard.java
 +++ b/net/minecraft/world/scores/Scoreboard.java
 @@ -30,17 +30,47 @@ import org.slf4j.Logger;
@@ -30517,7 +30554,7 @@ index 4a15851bda30c918c58c96d2cb98b74f30db396c..e6a98c9f8e0d7706090d23120b5566c7
 +
 +    public void ensureMainThread(final String reason) {
 +        // if in startup, we don't care, and if we are in shutdown, we don't care
-+        if (io.papermc.paper.threadedregions.TickRegions.hasStarted() && !io.papermc.paper.threadedregions.RegionShutdownThread.canvas$isShutdown()) {
++        if (io.papermc.paper.threadedregions.TickRegions.hasStarted() && !io.papermc.paper.threadedregions.RegionShutdownThread.isShuttingDown()) {
 +            io.papermc.paper.threadedregions.RegionizedServer.ensureGlobalTickThread(reason);
 +        }
 +    }
