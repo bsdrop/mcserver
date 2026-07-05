@@ -1,8 +1,8 @@
 --- a/src/main/java/io/papermc/paper/configuration/WorldConfiguration.java
 +++ b/src/main/java/io/papermc/paper/configuration/WorldConfiguration.java
-@@ -95,40 +_,41 @@
+@@ -95,40 +_,41 @@ public class WorldConfiguration extends ConfigurationPart {
          public AntiXray antiXray;
-
+ 
          public class AntiXray extends ConfigurationPart {
 -            public boolean enabled = false;
 -            public EngineMode engineMode = EngineMode.HIDE;
@@ -51,8 +51,8 @@
 +            );
          }
      }
-
-@@ -578,7 +_,7 @@
+ 
+@@ -578,7 +_,7 @@ public class WorldConfiguration extends ConfigurationPart {
      public class Misc extends ConfigurationPart {
          public boolean updatePathfindingOnBlockUpdate = true;
          public boolean showSignClickCommandFailureMsgsToPlayer = false;
