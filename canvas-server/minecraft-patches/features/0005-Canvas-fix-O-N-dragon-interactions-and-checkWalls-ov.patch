@@ -26,14 +26,14 @@ index c65cd48e543633fd527b32980919aa88826cf252..0ea23c7806b84ad1020d2ee79698718e
 -                    this.inWall = this.checkWalls(level, this.head.getBoundingBox())
 -                        | this.checkWalls(level, this.neck.getBoundingBox())
 -                        | this.checkWalls(level, this.body.getBoundingBox());
-+                    // Canvas start - throttle checkWalls to every 2 ticks; block states rarely change
++                    // Claude start - throttle checkWalls to every 2 ticks; block states rarely change
 +                    // and dragon wall-detection latency of one extra tick is imperceptible
 +                    if ((this.tickCount & 1) == 0) {
 +                        this.inWall = this.checkWalls(level, this.head.getBoundingBox())
 +                            | this.checkWalls(level, this.neck.getBoundingBox())
 +                            | this.checkWalls(level, this.body.getBoundingBox());
 +                    }
-+                    // Canvas end
++                    // Claude end
                      if (this.dragonFight != null) {
                          this.dragonFight.updateDragon(this);
                      }
@@ -41,10 +41,10 @@ index c65cd48e543633fd527b32980919aa88826cf252..0ea23c7806b84ad1020d2ee79698718e
          double zm = (this.body.getBoundingBox().minZ + this.body.getBoundingBox().maxZ) / 2.0;
  
          for (Entity entity : entities) {
-+            // Canvas start - multi-dragon O(N²) fix: skip dragon-dragon interactions
++            // Claude start - multi-dragon O(N²) fix: skip dragon-dragon interactions
 +            // Wings attacking other dragons creates O(N²) knockback/hurt calls when many dragons share airspace.
 +            if (entity instanceof EnderDragon || entity instanceof EnderDragonPart) continue;
-+            // Canvas end - multi-dragon O(N²) fix
++            // Claude end - multi-dragon O(N²) fix
              if (entity instanceof LivingEntity livingTarget) {
                  double xd = entity.getX() - xm;
                  double zd = entity.getZ() - zm;
@@ -52,9 +52,9 @@ index c65cd48e543633fd527b32980919aa88826cf252..0ea23c7806b84ad1020d2ee79698718e
  
      private void hurt(final ServerLevel level, final List<Entity> entities) {
          for (Entity target : entities) {
-+            // Canvas start - multi-dragon O(N²) fix: dragon head shouldn't damage other dragons
++            // Claude start - multi-dragon O(N²) fix: dragon head shouldn't damage other dragons
 +            if (target instanceof EnderDragon || target instanceof EnderDragonPart) continue;
-+            // Canvas end - multi-dragon O(N²) fix
++            // Claude end - multi-dragon O(N²) fix
              if (target instanceof LivingEntity) {
                  DamageSource damageSource = this.damageSources().mobAttack(this);
                  target.hurtServer(level, damageSource, 10.0F);
@@ -65,10 +65,10 @@ index c65cd48e543633fd527b32980919aa88826cf252..0ea23c7806b84ad1020d2ee79698718e
 -            for (int y = y0; y <= y1; y++) {
 -                for (int z = z0; z <= z1; z++) {
 +            for (int z = z0; z <= z1; z++) {
-+                // Canvas start - skip unloaded chunks in checkWalls; avoids ServerChunkCache.getChunk
++                // Claude start - skip unloaded chunks in checkWalls; avoids ServerChunkCache.getChunk
 +                // triggering chunk gen/load when dragon parts extend into unloaded territory
 +                if (level.getChunkIfLoaded(x >> 4, z >> 4) == null) continue;
-+                // Canvas end
++                // Claude end
 +                for (int y = y0; y <= y1; y++) {
                      BlockPos blockPos = new BlockPos(x, y, z);
                      BlockState state = level.getBlockState(blockPos);

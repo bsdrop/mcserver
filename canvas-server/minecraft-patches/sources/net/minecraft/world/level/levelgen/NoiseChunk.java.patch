@@ -4,7 +4,7 @@
      private final int firstNoiseZ;
      private final List<NoiseChunk.NoiseInterpolator> interpolators;
      private final List<NoiseChunk.CacheAllInCell> cellCaches;
-+    // Canvas - array snapshots of the two lists above, populated when interpolation begins; the per-block hot
++    // Claude - array snapshots of the two lists above, populated when interpolation begins; the per-block hot
 +    // loops iterate these arrays instead of the ArrayLists so enhanced-for compiles to an index loop with no
 +    // per-call Iterator allocation (ArrayList$Itr.next() was a top worldgen leaf). Lists are immutable post-construction.
 +    private NoiseChunk.NoiseInterpolator[] interpolatorsArr;
@@ -16,7 +16,7 @@
          }
  
          List<NoiseChunk.BlockStateFiller> builder = new ArrayList<>();
-+        // Canvas start - GPU full-chunk density (Task #6): compute finalDensity at cell corners on GPU
++        // Claude start - GPU full-chunk density (Task #6): compute finalDensity at cell corners on GPU
 +        // (bit-exact verified) and feed it into MC's own interpolation via interpolated(gpuGrid).
 +        // Correct-by-construction; off-grid + not-ready + GPU-busy all fall back to CPU.
 +        DensityFunction densitySource = wrappedRouter.finalDensity();
@@ -50,7 +50,7 @@
 +            }
 +            io.canvasmc.canvas.gpu.worldgen.GPUSurfacePrecomputer.reportDensityUsed(gpuGrid.length);
 +        } else {
-+            // Canvas - GPU density miss (CPU fallback): gpuGrid null (tryLock fail/off-grid), size mismatch, or blend boundary
++            // Claude - GPU density miss (CPU fallback): gpuGrid null (tryLock fail/off-grid), size mismatch, or blend boundary
 +            io.canvasmc.canvas.gpu.worldgen.GPUSurfacePrecomputer.reportDensityMiss();
 +        }
          DensityFunction fullNoiseValue = DensityFunctions.cacheAllInCell(
@@ -58,7 +58,7 @@
 +                DensityFunctions.add(densitySource, DensityFunctions.BeardifierMarker.INSTANCE)
              )
              .mapAll(this::wrap);
-+        // Canvas end - GPU full-chunk density
++        // Claude end - GPU full-chunk density
          this.fullNoiseDensity = fullNoiseValue;
          builder.add(context -> this.aquifer.computeSubstance(context, fullNoiseValue.compute(context)));
          if (settings.oreVeinsEnabled()) {
@@ -79,7 +79,7 @@
              this.arrayInterpolationCounter++;
  
 -            for (NoiseChunk.NoiseInterpolator noiseInterpolator : this.interpolators) {
-+            for (NoiseChunk.NoiseInterpolator noiseInterpolator : this.interpolatorsArr) { // Canvas - array (no Iterator alloc)
++            for (NoiseChunk.NoiseInterpolator noiseInterpolator : this.interpolatorsArr) { // Claude - array (no Iterator alloc)
                  double[] slice = (slice0 ? noiseInterpolator.slice0 : noiseInterpolator.slice1)[cellZIndex];
                  noiseInterpolator.fillArray(slice, this.sliceFillingContextProvider);
              }
@@ -87,7 +87,7 @@
  
          this.interpolating = true;
          this.interpolationCounter = 0L;
-+        // Canvas - snapshot to arrays for iterator-free hot loops (all interpolators/cellCaches are registered by now)
++        // Claude - snapshot to arrays for iterator-free hot loops (all interpolators/cellCaches are registered by now)
 +        this.interpolatorsArr = this.interpolators.toArray(new NoiseChunk.NoiseInterpolator[0]);
 +        this.cellCachesArr = this.cellCaches.toArray(new NoiseChunk.CacheAllInCell[0]);
          this.fillSlice(true, this.firstCellX);
@@ -98,7 +98,7 @@
  
      public void selectCellYZ(final int cellYIndex, final int cellZIndex) {
 -        for (NoiseChunk.NoiseInterpolator i : this.interpolators) {
-+        for (NoiseChunk.NoiseInterpolator i : this.interpolatorsArr) { // Canvas - array (no Iterator alloc)
++        for (NoiseChunk.NoiseInterpolator i : this.interpolatorsArr) { // Claude - array (no Iterator alloc)
              i.selectCellYZ(cellYIndex, cellZIndex);
          }
  
@@ -107,7 +107,7 @@
          this.arrayInterpolationCounter++;
  
 -        for (NoiseChunk.CacheAllInCell cellCache : this.cellCaches) {
-+        for (NoiseChunk.CacheAllInCell cellCache : this.cellCachesArr) { // Canvas - array (no Iterator alloc)
++        for (NoiseChunk.CacheAllInCell cellCache : this.cellCachesArr) { // Claude - array (no Iterator alloc)
              cellCache.noiseFiller.fillArray(cellCache.values, this);
          }
  
@@ -116,7 +116,7 @@
          this.inCellY = posY - this.cellStartBlockY;
  
 -        for (NoiseChunk.NoiseInterpolator i : this.interpolators) {
-+        for (NoiseChunk.NoiseInterpolator i : this.interpolatorsArr) { // Canvas - array (no Iterator alloc)
++        for (NoiseChunk.NoiseInterpolator i : this.interpolatorsArr) { // Claude - array (no Iterator alloc)
              i.updateForY(factorY);
          }
      }
@@ -125,7 +125,7 @@
          this.inCellX = posX - this.cellStartBlockX;
  
 -        for (NoiseChunk.NoiseInterpolator i : this.interpolators) {
-+        for (NoiseChunk.NoiseInterpolator i : this.interpolatorsArr) { // Canvas - array (no Iterator alloc)
++        for (NoiseChunk.NoiseInterpolator i : this.interpolatorsArr) { // Claude - array (no Iterator alloc)
              i.updateForX(factorX);
          }
      }
@@ -134,7 +134,7 @@
          this.interpolationCounter++;
  
 -        for (NoiseChunk.NoiseInterpolator i : this.interpolators) {
-+        for (NoiseChunk.NoiseInterpolator i : this.interpolatorsArr) { // Canvas - array (no Iterator alloc)
++        for (NoiseChunk.NoiseInterpolator i : this.interpolatorsArr) { // Claude - array (no Iterator alloc)
              i.updateForZ(factorZ);
          }
      }

@@ -4,10 +4,10 @@
      public final double yo;
      public final double zo;
  
-+    // Canvas start - GPU noise: expose perm table for GPU batch dispatch
++    // Claude start - GPU noise: expose perm table for GPU batch dispatch
 +    /** Returns the 256-byte permutation table (read-only, do not modify). */
 +    public byte[] getPermTable() { return this.p; }
-+    // Canvas end - GPU noise
++    // Claude end - GPU noise
 +
 +    // Canvas start - inline math & small optimization: remove frequent type conversions and redundant ops
 +    private static final double[] FLAT_SIMPLEX_GRAD = new double[]{

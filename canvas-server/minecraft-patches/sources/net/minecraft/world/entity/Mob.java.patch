@@ -5,7 +5,7 @@
          super.inactiveTick();
          if (!this.aware) return; // Paper - Do not tick AI for inactive unaware mobs
 -        if (this.goalSelector.inactiveTick()) {
-+        final int rate = this.canvas$dabRate(); // Canvas - DAB: distance-scaled goal-selection rate for inactive mobs
++        final int rate = this.canvas$dabRate(); // Claude - DAB: distance-scaled goal-selection rate for inactive mobs
 +        if (this.goalSelector.inactiveTick(rate)) {
              this.goalSelector.tick();
          }
@@ -16,7 +16,7 @@
      }
      // Paper end
  
-+    // Canvas start - DAB (Dynamic Activation of Brain, concept from Pufferfish, GPL-3.0): inactive mobs far from
++    // Claude start - DAB (Dynamic Activation of Brain, concept from Pufferfish, GPL-3.0): inactive mobs far from
 +    // players tick their goal SELECTION less often. Only the (already-inactive) goal re-selection is throttled —
 +    // running goals still execute, the brain (customServerAiStep) is untouched, and the max rate is capped LOW so
 +    // mobs stay responsive enough to not drown/misbehave (avoids Pufferfish issue #58). Cached, recomputed ~every 20t.
@@ -51,7 +51,7 @@
 +        }
 +        return this.canvas$dabRate;
 +    }
-+    // Canvas end
++    // Claude end
 +
      public MoveControl getMoveControl() {
          return this.getControlledVehicle() instanceof Mob riding ? riding.getMoveControl() : this.moveControl;

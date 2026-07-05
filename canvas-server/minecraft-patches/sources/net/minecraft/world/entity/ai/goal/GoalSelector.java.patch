@@ -4,10 +4,10 @@
  
      // Paper start - EAR 2
      public boolean inactiveTick() {
-+        return this.inactiveTick(3); // Canvas - DAB overload (vanilla default rate)
++        return this.inactiveTick(3); // Claude - DAB overload (vanilla default rate)
 +    }
 +
-+    // Canvas - DAB: tick running goals every `rate` ticks; rate is distance-scaled by the caller (Mob.inactiveTick)
++    // Claude - DAB: tick running goals every `rate` ticks; rate is distance-scaled by the caller (Mob.inactiveTick)
 +    public boolean inactiveTick(final int rate) {
          this.curRate++;
 -        return this.curRate % 3 == 0; // TODO newGoalRate was already unused in 1.20.4, check if this is correct

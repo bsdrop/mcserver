@@ -204,7 +204,7 @@ public class GlobalConfiguration extends Part {
                 LOGGER.warn("Debug: Java: {}, test run: {}", System.getProperty("java.version"), SIMDDetection.testRun);
             }
 
-            // Canvas start - GPU chunk gen: startup test + benchmark
+            // Claude start - GPU chunk gen: startup test + benchmark
             try {
                 io.canvasmc.canvas.gpu.GPUNoiseAccelerator.runStartupTest();
                 if (io.canvasmc.canvas.gpu.GPUNoiseAccelerator.isAvailable()) {
@@ -214,7 +214,7 @@ public class GlobalConfiguration extends Part {
             } catch (Throwable t) {
                 LOGGER.warn("[CanvasGPU] Startup test/benchmark failed: {}", t.getMessage());
             }
-            // Canvas end - GPU chunk gen
+            // Claude end - GPU chunk gen
 
             final Path logsDirectoryPath = Path.of("logs");
 
@@ -422,9 +422,9 @@ public class GlobalConfiguration extends Part {
         // Kept: local paper-server MoonriseCommon source still reads chunkSystem.threadPriority
         // (upstream removed its usage via patch, but the generated source isn't regenerated until
         // applyAllPatches; keeping the field compiles in both states, harmless if unused later).
-        public int threadPriority = Thread.NORM_PRIORITY;
-        // Canvas aggressive default: FILTERED reduces chunk-gen stutter (kept over upstream's VANILLA).
-        public FluidPostProcessingMode fluidPostProcessingAlgorithm = FluidPostProcessingMode.FILTERED;
+        public int threadPriority = Thread.NORM_PRIORITY; // Claude modified
+        // Claude aggressive default: FILTERED reduces chunk-gen stutter (kept over upstream's VANILLA).
+        public FluidPostProcessingMode fluidPostProcessingAlgorithm = FluidPostProcessingMode.FILTERED; // Claude modified
 
         public enum FluidPostProcessingMode {
             VANILLA,
@@ -432,12 +432,12 @@ public class GlobalConfiguration extends Part {
             FILTERED
         }
 
-        // Canvas aggressive defaults: all chunk-gen optimizations on
-        public boolean makeFluidPostProcessScheduledTick = true;
-        public boolean optimizeAquifer = true;
-        public boolean useEndBiomeCache = true;
-        public int endBiomeCacheSize = 4096;
-        public boolean optimizeBeardifier = true;
+        // Claude aggressive defaults: all chunk-gen optimizations on
+        public boolean makeFluidPostProcessScheduledTick = true; // Claude modified
+        public boolean optimizeAquifer = true; // Claude modified
+        public boolean useEndBiomeCache = true; // Claude modified
+        public int endBiomeCacheSize = 4096; // Claude modified
+        public boolean optimizeBeardifier = true; // Claude modified
 
         public StructureGen structureOptimizations = new StructureGen();
         public static class StructureGen extends Part {
@@ -457,9 +457,9 @@ public class GlobalConfiguration extends Part {
                 );
             }
 
-            // Canvas aggressive defaults: structure layout optimizer on
-            public boolean deduplicateShuffledTemplatePoolElementList = true;
-            public boolean enable = true;
+            // Claude aggressive defaults: structure layout optimizer on
+            public boolean deduplicateShuffledTemplatePoolElementList = true; // Claude modified
+            public boolean enable = true; // Claude modified
         }
     }
 
@@ -526,15 +526,15 @@ public class GlobalConfiguration extends Part {
                 );
         }
 
-        // Canvas aggressive defaults: filter redundant packets and async login
-        public boolean filterVelocityPacket = true;
-        public boolean filterMovePackets = true;
-        public boolean alternativePlayerListTick = true;
+        // Claude aggressive defaults: filter redundant packets and async login
+        public boolean filterVelocityPacket = true; // Claude modified
+        public boolean filterMovePackets = true; // Claude modified
+        public boolean alternativePlayerListTick = true; // Claude modified
         public int playerInfoSendInterval = 600;
-        public boolean asyncProtocolSwitch = true; // Canvas aggressive default (over upstream false)
-        public int maximumPacketBytes = 8388608;
-        public boolean disablePaperPacketOverflowContainerFix = false;
-        public String packetTooLargeDisconnectReason = "Clientbound packet exceeded max packet bytes";
+        public boolean asyncProtocolSwitch = true; // Claude aggressive default (over upstream false)
+        public int maximumPacketBytes = 8388608; // Claude modified
+        public boolean disablePaperPacketOverflowContainerFix = false; // Claude modified
+        public String packetTooLargeDisconnectReason = "Clientbound packet exceeded max packet bytes"; // Claude modified
         public boolean purpurAlternativeKeepalive = false;
     }
 
@@ -561,8 +561,8 @@ public class GlobalConfiguration extends Part {
     public String serverModName = ServerBuildInfo.buildInfo().brandName();
     public boolean displayWorldLoadScreenForPortaling = true;
     public boolean displayWorldLoadScreenForTeleporting = true;
-    // Canvas aggressive defaults: cache expensive type conversion; no tile entity snapshot overhead
-    public boolean cacheMinecraft2BukkitEntityTypeConversion = true;
+    // Claude aggressive defaults: cache expensive type conversion; no tile entity snapshot overhead
+    public boolean cacheMinecraft2BukkitEntityTypeConversion = true; // Claude modified
     public boolean tileEntitySnapshotCreation = false;
     public String defaultRespawnDimensionKey = Level.OVERWORLD.identifier().toString();
 

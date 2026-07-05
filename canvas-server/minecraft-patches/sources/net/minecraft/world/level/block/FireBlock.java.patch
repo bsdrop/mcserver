@@ -4,11 +4,11 @@
              if (!(level instanceof Level world)) {
                  return Blocks.AIR.defaultBlockState();
              }
-+            // Canvas start - skip event alloc when no listeners
++            // Claude start - skip event alloc when no listeners
 +            if (org.bukkit.event.block.BlockFadeEvent.getHandlerList().getRegisteredListeners().length == 0) {
 +                return Blocks.AIR.defaultBlockState();
 +            }
-+            // Canvas end
++            // Claude end
              org.bukkit.craftbukkit.block.CraftBlockState snapshot = org.bukkit.craftbukkit.block.CraftBlockStates.getBlockState(world, pos);
              snapshot.setBlock(Blocks.AIR.defaultBlockState());
  

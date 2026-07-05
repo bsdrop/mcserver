@@ -15,7 +15,7 @@
              4, "lz4", in -> new FastBufferedInputStream(new LZ4BlockInputStream(in)), out -> new BufferedOutputStream(new LZ4BlockOutputStream(out))
 +        )
 +    );
-+    public static final RegionFileVersion VERSION_ZSTD = register( // Canvas - zstd region compression
++    public static final RegionFileVersion VERSION_ZSTD = register( // Claude - zstd region compression
 +        new RegionFileVersion(
 +            5, "zstd",
 +            in -> new FastBufferedInputStream(new ZstdInputStream(in)),

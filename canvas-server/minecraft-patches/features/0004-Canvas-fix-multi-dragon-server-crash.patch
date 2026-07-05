@@ -25,16 +25,16 @@ index ba45c99c1651067c076de419ac0119aa683d5035..c65cd48e543633fd527b32980919aa88
  
          if (this.random.nextInt(10) == 0) {
 -            List<EndCrystal> crystals = this.level().getEntitiesOfClass(EndCrystal.class, this.getBoundingBox().inflate(32.0));
-+            // Canvas start - multi-dragon stability: share crystal list via fight cache instead of N separate entity scans
++            // Claude start - multi-dragon stability: share crystal list via fight cache instead of N separate entity scans
 +            List<EndCrystal> crystals = this.dragonFight != null
 +                ? this.dragonFight.canvas$getCachedCrystals()
 +                : this.level().getEntitiesOfClass(EndCrystal.class, this.getBoundingBox().inflate(32.0));
-+            // Canvas end - multi-dragon stability
++            // Claude end - multi-dragon stability
              EndCrystal nearest = null;
              double distance = Double.MAX_VALUE;
  
              for (EndCrystal crystal : crystals) {
-+                if (crystal.isRemoved()) continue; // Canvas - stale cache guard
++                if (crystal.isRemoved()) continue; // Claude - stale cache guard
                  double dist = crystal.distanceToSqr(this);
                  if (dist < distance) {
                      distance = dist;
@@ -54,7 +54,7 @@ index b07a36b1b2f4d009b10b9df864f285f7be100709..43eadfc1b95bf96cedf4a27cf2a0fccc
                      float angleDegs = (float)(Math.acos(dot) * 180.0F / (float)Math.PI);
                      angleDegs += 0.5F;
                      if (this.fireballCharge >= 5 && angleDegs >= 0.0F && angleDegs < 10.0F) {
-+                        // Canvas start - multi-dragon stability: global fireball rate limit
++                        // Claude start - multi-dragon stability: global fireball rate limit
 +                        // Without this, N dragons all fire simultaneously on the same tick → N fireballs
 +                        // each spawning an AreaEffectCloud on impact, crashing the server with dozens of dragons.
 +                        EnderDragonFight fight = this.dragon.getDragonFight();
@@ -65,7 +65,7 @@ index b07a36b1b2f4d009b10b9df864f285f7be100709..43eadfc1b95bf96cedf4a27cf2a0fccc
 +                            }
 +                            fight.canvas$lastFireballTick = now;
 +                        }
-+                        // Canvas end - multi-dragon stability
++                        // Claude end - multi-dragon stability
                          double d = 1.0;
                          Vec3 viewVector = this.dragon.getViewVector(1.0F);
                          double startingX = this.dragon.head.getX() - viewVector.x * 1.0;
@@ -77,7 +77,7 @@ index aa26a39b82d0dd5680aa0d2dbc032721df461256..1d0ba56690096c5173d227f18653fb77
      private boolean skipArenaLoadedCheck = false;
      private @Nullable UUID dragonUUID;
      private boolean needsStateScanning;
-+    // Canvas start - multi-dragon stability: cache shared crystal list and rate-limit fireballs
++    // Claude start - multi-dragon stability: cache shared crystal list and rate-limit fireballs
 +    // Without this, N dragons each scan for crystals independently ~N/10 times per tick,
 +    // and all fire simultaneously causing AreaEffectCloud entity explosions.
 +    private List<EndCrystal> canvas$cachedCrystals = List.of();
@@ -96,7 +96,7 @@ index aa26a39b82d0dd5680aa0d2dbc032721df461256..1d0ba56690096c5173d227f18653fb77
 +        }
 +        return this.canvas$cachedCrystals;
 +    }
-+    // Canvas end - multi-dragon stability
++    // Claude end - multi-dragon stability
      public @Nullable BlockPos exitPortalLocation;
      public @Nullable DragonRespawnStage respawnStage;
      private int respawnTime;

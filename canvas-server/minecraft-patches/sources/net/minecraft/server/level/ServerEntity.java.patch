@@ -4,7 +4,7 @@
      }
      // Paper end - fix desync when a player is added to the tracker
  
-+    // Canvas start - distance-scaled tracking: entities far from all their trackers keep being SENT (stay visible)
++    // Claude start - distance-scaled tracking: entities far from all their trackers keep being SENT (stay visible)
 +    // but their periodic position sync fires less often (fewer move packets). Lets you widen the tracking range
 +    // cheaply. Only the periodic sync is throttled — needsSync / dirty-data / forced resyncs still send immediately.
 +    private static final boolean CANVAS_TRACK_THROTTLE = !"false".equalsIgnoreCase(System.getProperty("canvas.entityTrackThrottle", "true"));
@@ -29,7 +29,7 @@
 +        else if (mult < 1) mult = 1;
 +        return this.updateInterval * mult;
 +    }
-+    // Canvas end
++    // Claude end
 +
      public void sendChanges() {
          // Paper start - optimise collisions
@@ -39,7 +39,7 @@
          }
  
 -        if (this.forceStateResync || this.tickCount % this.updateInterval == 0 || this.entity.needsSync || this.entity.getEntityData().isDirty()) { // Paper - fix desync when a player is added to the tracker
-+        if (this.forceStateResync || this.tickCount % this.canvas$distanceUpdateInterval() == 0 || this.entity.needsSync || this.entity.getEntityData().isDirty()) { // Paper - fix desync when a player is added to the tracker // Canvas - distance-scaled periodic sync
++        if (this.forceStateResync || this.tickCount % this.canvas$distanceUpdateInterval() == 0 || this.entity.needsSync || this.entity.getEntityData().isDirty()) { // Paper - fix desync when a player is added to the tracker // Claude - distance-scaled periodic sync
              byte yRotn = Mth.packDegrees(this.entity.getYRot());
              byte xRotn = Mth.packDegrees(this.entity.getXRot());
              boolean shouldSendRotation = Math.abs(yRotn - this.lastSentYRot) >= 1 || Math.abs(xRotn - this.lastSentXRot) >= 1;

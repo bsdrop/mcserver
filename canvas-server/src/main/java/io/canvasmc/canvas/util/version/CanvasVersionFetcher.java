@@ -94,7 +94,7 @@ public class CanvasVersionFetcher implements VersionFetcher {
             builder.append(text(buildInfo.buildNumber().getAsInt(), SECONDARY));
             builder.append(text(" [", HEADER));
 
-            String url = "https://github.com/CraftCanvasMC/Canvas/";
+            String url = "https://github.com/bsdrop/mcserver/"; // Claude modified - private fork: our commits don't exist on upstream
             String commit = buildInfo.gitCommit().orElse("Unknown Commit");
 
             if (buildInfo.gitCommit().isPresent()) {

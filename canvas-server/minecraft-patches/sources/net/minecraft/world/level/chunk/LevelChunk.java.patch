@@ -54,15 +54,15 @@
  
      @Override
      public void markUnsaved() {
-+        // Canvas start - invalidate cached chunk packet data on any mutation; bump seq so in-flight async obfuscation can't cache stale data
++        // Claude start - invalidate cached chunk packet data on any mutation; bump seq so in-flight async obfuscation can't cache stale data
 +        this.canvas$cachedChunkData = null;
 +        this.canvas$cachedObfuscatedChunkData = null;
 +        this.canvas$packetSeq++;
-+        // Canvas end
++        // Claude end
          super.markUnsaved(); // Folia - region threading - unsavedListener is not really use
      }
  
-+    // Canvas start - cached chunk packet data (block serialization reused across players; invalidated on markUnsaved)
++    // Claude start - cached chunk packet data (block serialization reused across players; invalidated on markUnsaved)
 +    private net.minecraft.network.protocol.game.ClientboundLevelChunkPacketData canvas$cachedChunkData;
 +    // anti-xray path: obfuscated data is built asynchronously on a non-region thread, so these are volatile
 +    private volatile net.minecraft.network.protocol.game.ClientboundLevelChunkPacketData canvas$cachedObfuscatedChunkData;
@@ -104,7 +104,7 @@
 +            this.canvas$cachedObfuscatedChunkData = null;
 +        }
 +    }
-+    // Canvas end
++    // Claude end
 +
      @Override
      public TickContainerAccess<Block> getBlockTicks() {

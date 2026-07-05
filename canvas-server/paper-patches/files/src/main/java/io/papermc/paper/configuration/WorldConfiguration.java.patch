@@ -6,7 +6,7 @@
          public class AntiXray extends ConfigurationPart {
 -            public boolean enabled = false;
 -            public EngineMode engineMode = EngineMode.HIDE;
-+            // Canvas: enabled by default with mode 2 obfuscation and a focused ore list for efficiency
++            // Claude: enabled by default with mode 2 obfuscation and a focused ore list for efficiency
 +            public boolean enabled = true;
 +            public EngineMode engineMode = EngineMode.OBFUSCATE;
              public int maxBlockHeight = 64;
@@ -15,7 +15,7 @@
              public boolean usePermission = false;
              public List<Block> hiddenBlocks = List.of(
                  //<editor-fold desc="Anti-Xray Hidden Blocks" defaultstate="collapsed">
-+                // Canvas: trimmed to valuable ores only; fewer entries = less obfuscation CPU overhead
++                // Claude: trimmed to valuable ores only; fewer entries = less obfuscation CPU overhead
                  Blocks.COPPER_ORE,
                  Blocks.DEEPSLATE_COPPER_ORE,
 -                Blocks.RAW_COPPER_BLOCK,
@@ -43,7 +43,7 @@
                  //</editor-fold>
              );
 -            public List<Block> replacementBlocks = List.of(Blocks.STONE, Blocks.OAK_PLANKS, Blocks.DEEPSLATE);
-+            // Canvas: richer replacement block palette makes obfuscation harder to detect visually
++            // Claude: richer replacement block palette makes obfuscation harder to detect visually
 +            public List<Block> replacementBlocks = List.of(
 +                Blocks.STONE, Blocks.GRANITE, Blocks.ANDESITE, Blocks.DIORITE,
 +                Blocks.DEEPSLATE, Blocks.TUFF, Blocks.CALCITE,
@@ -57,7 +57,7 @@
          public boolean updatePathfindingOnBlockUpdate = true;
          public boolean showSignClickCommandFailureMsgsToPlayer = false;
 -        public RedstoneImplementation redstoneImplementation = RedstoneImplementation.VANILLA;
-+        public RedstoneImplementation redstoneImplementation = RedstoneImplementation.ALTERNATE_CURRENT; // Canvas - default to AlternateCurrent (O(N) vs vanilla O(N²))
++        public RedstoneImplementation redstoneImplementation = RedstoneImplementation.ALTERNATE_CURRENT; // Claude - default to AlternateCurrent (O(N) vs vanilla O(N²))
          public AlternateCurrentUpdateOrder alternateCurrentUpdateOrder = AlternateCurrentUpdateOrder.HORIZONTAL_FIRST_OUTWARD;
          public boolean disableEndCredits = false;
          public DoubleOr.Default maxLeashDistance = DoubleOr.Default.USE_DEFAULT;

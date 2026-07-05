@@ -5,7 +5,7 @@
              final net.minecraft.util.BitStorage storage = data.storage();
  
 -            final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<it.unimi.dsi.fastutil.shorts.ShortArrayList> counts;
-+            // Canvas start - only collect per-block coordinates for randomly-ticking palette entries (the rest need
++            // Claude start - only collect per-block coordinates for randomly-ticking palette entries (the rest need
 +            // just the count) so the dominant non-ticking blocks don't build+grow a full coordinate list per section.
 +            final boolean[] collectCoords = new boolean[paletteSize];
 +            for (int i = 0; i < paletteSize; ++i) {
@@ -51,7 +51,7 @@
                      }
                  }
              }
-+            // Canvas end
++            // Claude end
          }
          // Paper end - block counting
      }

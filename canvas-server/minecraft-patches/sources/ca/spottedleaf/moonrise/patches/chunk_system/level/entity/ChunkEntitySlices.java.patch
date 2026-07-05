@@ -26,7 +26,7 @@
  
      private static final class EntityCollectionBySection {
  
-+        // Canvas start - SIMD batch AABB filter for entity queries
++        // Claude start - SIMD batch AABB filter for entity queries
 +        private static final int SIMD_THRESHOLD = 16;
 +        private static final int SIMD_INITIAL_CAP = 64;
 +        private static final ThreadLocal<float[]> TL_MIN_X = ThreadLocal.withInitial(() -> new float[SIMD_INITIAL_CAP]);
@@ -47,7 +47,7 @@
 +        private static Entity[] grow(Entity[] arr, int needed) {
 +            return arr.length >= needed ? arr : new Entity[Integer.highestOneBit(needed - 1) << 1];
 +        }
-+        // Canvas end - SIMD batch AABB filter
++        // Claude end - SIMD batch AABB filter
 +
          private final ChunkEntitySlices slices;
          private final BasicEntityList<Entity>[] entitiesBySection;
@@ -56,7 +56,7 @@
  
              final BasicEntityList<Entity>[] entitiesBySection = this.entitiesBySection;
  
-+            // Canvas start - SIMD batch AABB filter
++            // Claude start - SIMD batch AABB filter
 +            final boolean useSIMD = SIMDDetection.isEnabled;
 +            float[] minX = null, minY = null, minZ = null, maxX = null, maxY = null, maxZ = null;
 +            boolean[] mask = null;
@@ -66,7 +66,7 @@
 +                maxX = TL_MAX_X.get(); maxY = TL_MAX_Y.get(); maxZ = TL_MAX_Z.get();
 +                mask = TL_MASK.get(); compact = TL_COMPACT.get();
 +            }
-+            // Canvas end - SIMD batch AABB filter
++            // Claude end - SIMD batch AABB filter
              for (int section = min; section <= max; ++section) {
                  final BasicEntityList<Entity> list = entitiesBySection[section - minSection];
  
@@ -78,7 +78,7 @@
 -                for (int i = 0, len = Math.min(storage.length, list.size()); i < len; ++i) {
 +                final int len = Math.min(storage.length, list.size());
 +
-+                // Canvas start - SIMD batch AABB filter
++                // Claude start - SIMD batch AABB filter
 +                if (useSIMD && len >= SIMD_THRESHOLD) {
 +                    // Phase 1: compact non-null, non-except entities
 +                    if (compact.length < len) { compact = grow(compact, len); TL_COMPACT.set(compact); }
@@ -125,7 +125,7 @@
 +                    }
 +                    continue;
 +                }
-+                // Canvas end - SIMD batch AABB filter
++                // Claude end - SIMD batch AABB filter
 +
 +                for (int i = 0; i < len; ++i) {
                      final Entity entity = storage[i];

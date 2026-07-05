@@ -14,11 +14,11 @@ index 0ea23c7806b84ad1020d2ee79698718e77287882..8e6c04378da2d320eb184f9f01848ec8
      private final net.minecraft.world.level.Explosion explosionSource; // Paper - reusable source for CraftTNTPrimed.getSource()
      private @Nullable BlockPos podium;
      // Paper end
-+    // Canvas start - preallocated part old-position arrays; avoids 8 Vec3 allocations per tick
++    // Claude start - preallocated part old-position arrays; avoids 8 Vec3 allocations per tick
 +    private double[] canvas$partOldX;
 +    private double[] canvas$partOldY;
 +    private double[] canvas$partOldZ;
-+    // Canvas end
++    // Claude end
  
      public EnderDragon(final EntityType<? extends EnderDragon> type, final Level level) {
          super(EntityTypes.ENDER_DRAGON, level);
@@ -26,11 +26,11 @@ index 0ea23c7806b84ad1020d2ee79698718e77287882..8e6c04378da2d320eb184f9f01848ec8
          this.wing1 = new EnderDragonPart(this, "wing", 4.0F, 2.0F);
          this.wing2 = new EnderDragonPart(this, "wing", 4.0F, 2.0F);
          this.subEntities = new EnderDragonPart[]{this.head, this.neck, this.body, this.tail1, this.tail2, this.tail3, this.wing1, this.wing2};
-+        // Canvas start - initialize oldPos cache arrays
++        // Claude start - initialize oldPos cache arrays
 +        this.canvas$partOldX = new double[this.subEntities.length];
 +        this.canvas$partOldY = new double[this.subEntities.length];
 +        this.canvas$partOldZ = new double[this.subEntities.length];
-+        // Canvas end
++        // Claude end
          this.setHealth(this.getMaxHealth());
          this.noPhysics = true;
          this.phaseManager = new EnderDragonPhaseManager(this);
@@ -38,7 +38,7 @@ index 0ea23c7806b84ad1020d2ee79698718e77287882..8e6c04378da2d320eb184f9f01848ec8
          }
      }
  
-+    // Canvas start - eliminate overhead that is always a no-op in The End
++    // Claude start - eliminate overhead that is always a no-op in The End
 +    @Override
 +    protected Entity.MovementEmission getMovementEmission() {
 +        // Returning SOUNDS skips FLAP/STEP/SWIM GameEvent dispatches.
@@ -51,7 +51,7 @@ index 0ea23c7806b84ad1020d2ee79698718e77287882..8e6c04378da2d320eb184f9f01848ec8
 +        // Ender Dragons don't touch powder snow, honey, or other block effects in The End.
 +        // Parent's triple-nested getBlockState scan (Entity.applyEffectsFromBlocks) is pure overhead.
 +    }
-+    // Canvas end
++    // Claude end
 +
      @Override
      protected void defineSynchedData(final SynchedEntityData.Builder entityData) {
@@ -62,14 +62,14 @@ index 0ea23c7806b84ad1020d2ee79698718e77287882..8e6c04378da2d320eb184f9f01848ec8
                  this.yBodyRot = this.getYRot();
 -                Vec3[] oldPos = new Vec3[this.subEntities.length];
 -
-+                // Canvas start - use preallocated double[] fields to avoid 8 Vec3 allocations per tick
++                // Claude start - use preallocated double[] fields to avoid 8 Vec3 allocations per tick
                  for (int i = 0; i < this.subEntities.length; i++) {
 -                    oldPos[i] = new Vec3(this.subEntities[i].getX(), this.subEntities[i].getY(), this.subEntities[i].getZ());
 +                    this.canvas$partOldX[i] = this.subEntities[i].getX();
 +                    this.canvas$partOldY[i] = this.subEntities[i].getY();
 +                    this.canvas$partOldZ[i] = this.subEntities[i].getZ();
                  }
-+                // Canvas end
++                // Claude end
  
                  float tilt = (float)(this.flightHistory.get(5).y() - this.flightHistory.get(10).y()) * 10.0F * Mth.DEG_TO_RAD;
                  float ccTilt = Mth.cos(tilt);
@@ -79,9 +79,9 @@ index 0ea23c7806b84ad1020d2ee79698718e77287882..8e6c04378da2d320eb184f9f01848ec8
                  this.tickPart(this.wing2, cc1 * -4.5F, 2.0, ss1 * -4.5F);
 -                if (this.level() instanceof ServerLevel serverLevel && this.hurtTime == 0) {
 -                    // Canvas start - region threading
-+                // Canvas start - throttle wing/head entity scan to every 2 ticks; plugin compat not required
++                // Claude start - throttle wing/head entity scan to every 2 ticks; plugin compat not required
 +                if (this.level() instanceof ServerLevel serverLevel && this.hurtTime == 0 && (this.tickCount & 1) == 0) {
-+                    // Canvas - region threading
++                    // Claude - region threading
                      final AABB wing1AABB = this.wing1.getBoundingBox()
                          .inflate(4.0, 2.0, 4.0)
                          .move(0.0, -2.0, 0.0);
@@ -113,7 +113,7 @@ index 0ea23c7806b84ad1020d2ee79698718e77287882..8e6c04378da2d320eb184f9f01848ec8
                      }
 -                    // Canvas end - region threading
                  }
-+                // Canvas end
++                // Claude end
  
                  float ss2 = Mth.sin(this.getYRot() * Mth.DEG_TO_RAD - this.yRotA * 0.01F);
                  float cc2 = Mth.cos(this.getYRot() * Mth.DEG_TO_RAD - this.yRotA * 0.01F);
@@ -121,7 +121,7 @@ index 0ea23c7806b84ad1020d2ee79698718e77287882..8e6c04378da2d320eb184f9f01848ec8
                      }
                  }
  
-+                // Canvas start - use cached double[] arrays (no Vec3 allocation)
++                // Claude start - use cached double[] arrays (no Vec3 allocation)
                  for (int i = 0; i < this.subEntities.length; i++) {
 -                    this.subEntities[i].xo = oldPos[i].x;
 -                    this.subEntities[i].yo = oldPos[i].y;
@@ -136,7 +136,7 @@ index 0ea23c7806b84ad1020d2ee79698718e77287882..8e6c04378da2d320eb184f9f01848ec8
 +                    this.subEntities[i].yOld = this.canvas$partOldY[i];
 +                    this.subEntities[i].zOld = this.canvas$partOldZ[i];
                  }
-+                // Canvas end
++                // Claude end
              }
          }
      }
@@ -149,12 +149,12 @@ index a8e3df21c27b9c86f9f03ea436ef4099a0805b71..8524b7a5f36438d9998c268d9ab8d690
          return false;
      }
 +
-+    // Canvas start - minimal tick; position is set by parent dragon's tickPart() each tick.
++    // Claude start - minimal tick; position is set by parent dragon's tickPart() each tick.
 +    // Skipping Entity.baseTick() eliminates fire/fluid/portal/void/freeze overhead
 +    // that is always a no-op for a collision part at y=80 in The End.
 +    @Override
 +    public void tick() {
 +        ++this.tickCount;
 +    }
-+    // Canvas end
++    // Claude end
  }

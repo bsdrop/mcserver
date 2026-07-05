@@ -5,7 +5,7 @@
          }
      }
 +
-+    // Canvas - single-pass: count EVERY palette index into countsOut, but only build coordinate lists for indices
++    // Claude - single-pass: count EVERY palette index into countsOut, but only build coordinate lists for indices
 +    // flagged in collectCoords (randomly-ticking blocks). Removes the ShortArrayList build+grow for the dominant
 +    // non-ticking blocks (stone/air) whose coordinates recalcBlockCounts never reads. Counts are exact & identical.
 +    @Override

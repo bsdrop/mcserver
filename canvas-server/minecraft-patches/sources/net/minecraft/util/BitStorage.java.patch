@@ -5,7 +5,7 @@
          return ret;
      }
 +
-+    // Canvas - default single-pass counts + coords-only-for-collected variant (generic fallback via get())
++    // Claude - default single-pass counts + coords-only-for-collected variant (generic fallback via get())
 +    @Override
 +    public default it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<it.unimi.dsi.fastutil.shorts.ShortArrayList> moonrise$countEntries(final boolean[] collectCoords, final int[] countsOut) {
 +        final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<it.unimi.dsi.fastutil.shorts.ShortArrayList> ret = new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<>();

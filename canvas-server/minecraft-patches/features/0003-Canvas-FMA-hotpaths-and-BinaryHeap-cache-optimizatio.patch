@@ -48,7 +48,7 @@ index ce422db7961bfde1e0d17eb63691e4abd8e0bedb..55abd6da7bbf943558a69ec408681043
 -        final double var121 = var115 + var119;
 -        return var120 + (var103 * (var121 - var120));
 -        // Canvas end - inline math & small optimization: remove frequent type conversions and redundant ops
-+        // Canvas start - FMA: replace a*b+c patterns with fused multiply-add (1 rounding error vs 2, 1 insn on ARM NEON/x86 FMA)
++        // Claude start - FMA: replace a*b+c patterns with fused multiply-add (1 rounding error vs 2, 1 insn on ARM NEON/x86 FMA)
 +        // Dot products: g[0]*x + g[1]*y + g[2]*z → fma(g[0],x, fma(g[1],y, g[2]*z))
 +        final double var87 = Math.fma(FLAT_SIMPLEX_GRAD[var20],     xr,   Math.fma(FLAT_SIMPLEX_GRAD[var20 | 1], yr,   FLAT_SIMPLEX_GRAD[var20 | 2] * zr));
 +        final double var88 = Math.fma(FLAT_SIMPLEX_GRAD[var21],     var60, Math.fma(FLAT_SIMPLEX_GRAD[var21 | 1], yr,   FLAT_SIMPLEX_GRAD[var21 | 2] * zr));
@@ -82,7 +82,7 @@ index ce422db7961bfde1e0d17eb63691e4abd8e0bedb..55abd6da7bbf943558a69ec408681043
 +        final double var120 = Math.fma(var102, var116 - var113, var113);
 +        final double var121 = Math.fma(var102, var114 - var115, var115);
 +        return Math.fma(var103, var121 - var120, var120);
-+        // Canvas end - FMA
++        // Claude end - FMA
      }
  
      private double sampleWithDerivative(final int x, final int y, final int z, final double xr, final double yr, final double zr, final double[] derivativeOut) {
@@ -95,13 +95,13 @@ index 0ad59c736d2f38bd28608c5ab807425a1609e758..eb1e38e3c21547be502b8f1b097c7e6a
  
      protected static double dot(final int[] g, final double x, final double y, final double z) {
 -        return g[0] * x + g[1] * y + g[2] * z;
-+        // Canvas - FMA: fma(g0,x, fma(g1,y, g2*z)) → 2 FMA + 1 mul vs 3 mul + 2 add
++        // Claude - FMA: fma(g0,x, fma(g1,y, g2*z)) → 2 FMA + 1 mul vs 3 mul + 2 add
 +        return Math.fma(g[0], x, Math.fma(g[1], y, g[2] * z));
      }
  
      private double getCornerNoise3D(final int index, final double x, final double y, final double z, final double base) {
 -        double t0 = base - x * x - y * y - z * z;
-+        // Canvas - FMA: base - fma(x,x, fma(y,y, z*z))
++        // Claude - FMA: base - fma(x,x, fma(y,y, z*z))
 +        double t0 = base - Math.fma(x, x, Math.fma(y, y, z * z));
          double n0;
          if (t0 < 0.0) {
@@ -114,7 +114,7 @@ index 2cb6d1322e44a683e790f9ff4d989aea3b9472b1..e9ee55c5da80bd1a7c2837010435dba8
  
  public class BinaryHeap {
      private Node[] heap = new Node[128];
-+    // Canvas - parallel float array: heap comparisons read costs[] directly without
++    // Claude - parallel float array: heap comparisons read costs[] directly without
 +    // dereferencing Node pointers, eliminating cache misses in the tight heap loops.
 +    // On Cortex-A72 (RPi 4), a pointer chase costs ~40 cycles; this makes upHeap/downHeap
 +    // work only on a contiguous float[] until the swap is decided.

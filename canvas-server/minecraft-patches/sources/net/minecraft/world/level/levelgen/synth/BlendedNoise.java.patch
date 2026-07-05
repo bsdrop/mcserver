@@ -4,7 +4,7 @@
          return Mth.clampedLerp(factor, blendMin / 512.0, blendMax / 512.0) / 128.0;
      }
  
-+    // Canvas start - GPU worldgen: accessors for bit-exact OpenCL compilation of BlendedNoise
++    // Claude start - GPU worldgen: accessors for bit-exact OpenCL compilation of BlendedNoise
 +    public PerlinNoise canvas$minLimitNoise() { return this.minLimitNoise; }
 +    public PerlinNoise canvas$maxLimitNoise() { return this.maxLimitNoise; }
 +    public PerlinNoise canvas$mainNoise() { return this.mainNoise; }
@@ -13,7 +13,7 @@
 +    public double canvas$xzFactor() { return this.xzFactor; }
 +    public double canvas$yFactor() { return this.yFactor; }
 +    public double canvas$smearScaleMultiplier() { return this.smearScaleMultiplier; }
-+    // Canvas end - GPU worldgen
++    // Claude end - GPU worldgen
 +
      @Override
      public double minValue() {

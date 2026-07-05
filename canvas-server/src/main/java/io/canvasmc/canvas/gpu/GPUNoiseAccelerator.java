@@ -23,7 +23,7 @@ public final class GPUNoiseAccelerator {
     private static final Logger LOGGER = LogManager.getLogger("CanvasGPU");
     private static final boolean GPU_ENABLED = !Boolean.getBoolean("canvas.gpu.noise.disabled");
 
-    // Canvas - auto-tune to the measured GPU crossover (startup benchmark) when unset; -Dcanvas.gpu.noise.batch_threshold=N to pin.
+    // Claude - auto-tune to the measured GPU crossover (startup benchmark) when unset; -Dcanvas.gpu.noise.batch_threshold=N to pin.
     private static final Integer BATCH_THRESHOLD_OVERRIDE = Integer.getInteger("canvas.gpu.noise.batch_threshold");
     public static volatile int BATCH_THRESHOLD = BATCH_THRESHOLD_OVERRIDE != null ? BATCH_THRESHOLD_OVERRIDE : 8;
 
@@ -39,7 +39,7 @@ public final class GPUNoiseAccelerator {
 
     // Minimum output.length for GPU dispatch — from benchmark crossover (N=512)
     // Below this, GPU overhead (buffer copy + launch) exceeds computation savings
-    // Canvas - auto-tune to the measured crossover when unset; -Dcanvas.gpu.noise.min_n=N to pin.
+    // Claude - auto-tune to the measured crossover when unset; -Dcanvas.gpu.noise.min_n=N to pin.
     private static final Integer MIN_GPU_N_OVERRIDE = Integer.getInteger("canvas.gpu.noise.min_n");
     public static volatile int MIN_GPU_N = MIN_GPU_N_OVERRIDE != null ? MIN_GPU_N_OVERRIDE : 512;
 
@@ -235,7 +235,7 @@ public final class GPUNoiseAccelerator {
         }
 
         if (crossover > 0) {
-            // Canvas - auto-tune the GPU-dispatch gates to the measured crossover unless explicitly pinned
+            // Claude - auto-tune the GPU-dispatch gates to the measured crossover unless explicitly pinned
             if (BATCH_THRESHOLD_OVERRIDE == null) BATCH_THRESHOLD = crossover;
             if (MIN_GPU_N_OVERRIDE == null) MIN_GPU_N = crossover;
             sb.append(String.format("  → GPU crossover: N >= %d (GPU faster above this batch size)%n", crossover));

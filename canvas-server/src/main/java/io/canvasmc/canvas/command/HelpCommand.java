@@ -155,12 +155,9 @@ public class HelpCommand {
                                 ).type(
                                     DialogType.multiAction(
                                         List.of(
-                                            getLink("Discord", "https://canvasmc.io/discord/", "Click to open the discord server invite"),
-                                            getLink("Website", "https://canvasmc.io/", "Click to open our website"),
-                                            getLink("Source", "https://github.com/CraftCanvasMC/Canvas/", "Click to open the CanvasMC source repository"),
-                                            getLink("Issues", "https://github.com/CraftCanvasMC/Canvas/issues/", "Click to open our issues page on our repository"),
-                                            getLink("Docs", "https://docs.canvasmc.io/canvas/introduction/", "Click to open Canvas' documentation"),
-                                            getLink("Modrinth", "https://modrinth.com/organization/canvasmc/", "Click to open Canvas' Modrinth org"),
+                                            // Claude modified - private fork: upstream CanvasMC support/community links removed so this
+                                            // fork's users never end up in upstream's support channels. Attribution lives in LICENSE + git history.
+                                            getLink("Source", "https://github.com/bsdrop/mcserver/", "Click to open this fork's source repository"),
                                             ActionButton.builder(Component.text("Go back"))
                                                 .width(100)
                                                 .action(DialogAction.staticAction(ClickEvent.callback(GO_BACK_ACTION)))
