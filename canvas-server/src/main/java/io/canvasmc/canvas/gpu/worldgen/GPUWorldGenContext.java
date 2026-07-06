@@ -43,11 +43,11 @@ public final class GPUWorldGenContext {
     // Optional finalDensity value kernel (compute_value) for full-chunk density grids (Task #6).
     private volatile MemorySegment clValueKernel = null;
     // Optional fixed trilinear-interpolation kernel: corners -> per-block density on GPU (offloads
-    // MC's CPU NoiseInterpolator). Bit-exact vs Mth.lerp3 proven in gpu_verify/trilerp_match.c.
+    // MC's CPU NoiseInterpolator). CPU-matching vs Mth.lerp3 checked in gpu_verify/trilerp_match.c.
     private volatile MemorySegment clInterpKernel = null;
 
     // Fixed kernel: each work-item interpolates one block from the 8 surrounding cell corners.
-    // lerp(t,a,b)=a+t*(b-a) is NON-fma — FP_CONTRACT OFF keeps it bit-exact vs Java Mth.lerp3.
+    // lerp(t,a,b)=a+t*(b-a) is NON-fma — FP_CONTRACT OFF keeps it CPU-matching vs Java Mth.lerp3.
     // Output layout: ((lx*bZ)+lz)*bY+ly. Corner layout: ((ix*nz)+iz)*ny+iy (matches GpuGridDensity).
     private static final String INTERP_SRC =
         "#pragma OPENCL EXTENSION cl_khr_fp64 : enable\n"
@@ -87,7 +87,7 @@ public final class GPUWorldGenContext {
             }
             GPUWorldGenContext c = compile(clSrc);
             if (c != null && !c.verifyAgainstCpu(df, 8192)) {
-                LOGGER.warn("[CanvasGPU-WorldGen] BIT-EXACT VERIFY FAILED — refusing GPU, CPU fallback");
+                LOGGER.warn("[CanvasGPU-WorldGen] GPU-vs-CPU comparison failed — refusing GPU, CPU fallback");
                 return null; // never use a GPU context that doesn't match CPU
             }
             // Diagnostics (off by default — building the 394KB finalDensity kernel adds ~7s to compile).
@@ -101,10 +101,10 @@ public final class GPUWorldGenContext {
                 try { benchmarkDensityFunction(state.router().finalDensity(), "finalDensity"); } catch (Throwable ignored) {}
             }
             // Task #6: build the finalDensity value kernel for full-chunk GPU density grids, and
-            // VERIFY it bit-exact ONCE here (8192 pts). finalDensity is a deterministic function, so a
+            // Compare it against the CPU once here (8192 pts). finalDensity is a deterministic function, so a
             // one-time verify proves the kernel correct for all points → no per-chunk gate needed at
             // generation time (that gate cost 3 full finalDensity tree-walks per chunk on CPU, partly
-            // defeating the offload). Nether/End whose finalDensity isn't bit-exact → verify fails → CPU.
+            // defeating the offload). Nether/End whose finalDensity isn't CPU-matching → verify fails → CPU.
             if (!"false".equalsIgnoreCase(System.getProperty("canvas.gpu.density.enabled", "true"))) { // Claude - default ON
                 try {
                     DensityFunction fd = state.router().finalDensity();
@@ -114,21 +114,21 @@ public final class GPUWorldGenContext {
                         if (k != null) {
                             c.clValueKernel = k;
                             if (c.verifyValueKernel(fd, 8192)) {
-                                LOGGER.info("[CanvasGPU-WorldGen] finalDensity value kernel VERIFIED (8192/8192) + READY — GPU full-chunk density enabled");
+                                LOGGER.info("[CanvasGPU-WorldGen] finalDensity value kernel matched CPU (8192/8192) + ready — GPU full-chunk density enabled");
                                 // Optional: GPU per-block interpolation (offload MC's CPU NoiseInterpolator).
                                 if (!"false".equalsIgnoreCase(System.getProperty("canvas.gpu.interp", "true"))) { // Claude - default ON
                                     try {
                                         MemorySegment ik = buildKernel(INTERP_SRC, "interp");
                                         if (ik != null && c.verifyInterpKernel(ik, 0)) {
                                             c.clInterpKernel = ik;
-                                            LOGGER.info("[CanvasGPU-WorldGen] trilerp interp kernel VERIFIED bit-exact vs Mth.lerp3 + READY — GPU per-block interpolation enabled");
+                                            LOGGER.info("[CanvasGPU-WorldGen] trilerp interp kernel matches Mth.lerp3 on comparison + ready — GPU per-block interpolation enabled");
                                         } else {
                                             LOGGER.warn("[CanvasGPU-WorldGen] trilerp interp kernel verify FAILED — per-block interp stays on CPU");
                                         }
                                     } catch (Throwable t) { LOGGER.warn("[CanvasGPU-WorldGen] interp kernel build failed: {}", t.toString()); }
                                 }
                             } else {
-                                c.clValueKernel = null; // not bit-exact for this dimension → CPU density
+                                c.clValueKernel = null; // not CPU-matching for this dimension → CPU density
                                 LOGGER.warn("[CanvasGPU-WorldGen] finalDensity value kernel verify FAILED — GPU density disabled for this dimension (CPU)");
                             }
                         }
@@ -177,7 +177,7 @@ public final class GPUWorldGenContext {
             if (prgErr.get(ValueLayout.JAVA_INT, 0) != CL_SUCCESS)
                 throw new RuntimeException("clCreateProgramWithSource: " + prgErr.get(ValueLayout.JAVA_INT, 0));
 
-            // Bit-exact flags: correctly-rounded fp32 divide/sqrt (CubicSpline is float; OpenCL float
+            // CPU-matching flags: correctly-rounded fp32 divide/sqrt (CubicSpline is float; OpenCL float
             // division defaults to <=2.5 ULP, which diverges from Java's strict float division).
             MemorySegment buildOpts = a.allocateFrom("-cl-fp32-correctly-rounded-divide-sqrt");
             int buildErr = (int) GPUNoiseAccelerator.canvas$mhBuildProgram()
@@ -339,9 +339,9 @@ public final class GPUWorldGenContext {
           + "\n##                                                                            ##"
           + "\n################################################################################"
           + "\n##  reason: {}"
-          + "\n##  Terrain stays CORRECT (the CPU path is the bit-exact reference) but GPU"
+          + "\n##  Terrain stays CORRECT (the CPU path is the reference) but GPU"
           + "\n##  acceleration is now OFF for this dimension until the server restarts."
-          + "\n##  A verified deterministic kernel should NEVER emit NaN/garbage — if the"
+          + "\n##  A checked deterministic kernel should NEVER emit NaN/garbage — if the"
           + "\n##  reason is an anomalous value, suspect a GPU driver/hardware fault."
           + "\n################################################################################",
             reason);
@@ -401,7 +401,7 @@ public final class GPUWorldGenContext {
 
     public boolean hasValueKernel() { return clValueKernel != null && !failed; }
 
-    /** One-time bit-exact check of the persistent value kernel vs CPU finalDensity (8192 random pts). */
+    /** One-time CPU-matching check of the persistent value kernel vs CPU finalDensity (8192 random pts). */
     boolean verifyValueKernel(DensityFunction df, int n) {
         java.util.Random r = new java.util.Random(0xABCDEF12L);
         int[] xs = new int[n], ys = new int[n], zs = new int[n];
@@ -483,7 +483,7 @@ public final class GPUWorldGenContext {
                     double[] out = new double[n];
                     for (int i = 0; i < n; i++) {
                         double v = outMem.get(ValueLayout.JAVA_DOUBLE, (long) i * 8);
-                        // CL-side sanity guard: a verified deterministic kernel can only emit a finite,
+                        // CL-side sanity guard: a checked deterministic kernel can only emit a finite,
                         // O(1)-magnitude finalDensity. NaN / ±Inf / absurd magnitude ⇒ the GPU or driver
                         // faulted (page-fault read, bit-flip); using it would corrupt terrain → bail to CPU.
                         // (Cheap O(n) scan of already-resident data; this is the GPU-level "something is wrong"
@@ -511,7 +511,7 @@ public final class GPUWorldGenContext {
 
     /**
      * GPU trilinear interpolation: turn a cell-corner grid (from computeGrid) into a per-block density
-     * grid, reproducing MC's NoiseInterpolator/Mth.lerp3 bit-exactly (proven in gpu_verify/trilerp_match.c).
+     * grid, reproducing MC's NoiseInterpolator/Mth.lerp3 identically to this fork's CPU path (checked in gpu_verify/trilerp_match.c).
      * Returns null on GPU-busy/failure → caller keeps the CPU NoiseInterpolator path.
      * Output layout ((lx*bZ)+lz)*bY+ly with bX=(nx-1)*cw, bY=(ny-1)*ch, bZ=(nz-1)*cw.
      */
@@ -567,7 +567,7 @@ public final class GPUWorldGenContext {
         }
     }
 
-    /** One-time bit-exact check of the trilerp kernel vs CPU Mth.lerp3 over a small synthetic corner grid. */
+    /** One-time CPU-matching check of the trilerp kernel vs CPU Mth.lerp3 over a small synthetic corner grid. */
     boolean verifyInterpKernel(MemorySegment ik, int unused) {
         this.clInterpKernel = ik; // set so computeInterpChunk runs; nulled on any mismatch
         try {
@@ -595,7 +595,7 @@ public final class GPUWorldGenContext {
 
     /**
      * Compiles an arbitrary DF to a value kernel, evaluates it on GPU at random 3D points,
-     * and compares bit-exactly against CPU df.compute(). Logs PASS/FAIL. Standalone (own program).
+     * and compares identically to this fork's CPU path against CPU df.compute(). Logs PASS/FAIL. Standalone (own program).
      * Used to validate full-tree DFs like finalDensity before using them for chunk fill.
      */
     public static void verifyDensityFunction(DensityFunction df, String label, int n) {
@@ -678,9 +678,9 @@ public final class GPUWorldGenContext {
             GPUNoiseAccelerator.canvas$mhReleaseMemObject().invoke(bPos);
             GPUNoiseAccelerator.canvas$mhReleaseMemObject().invoke(bOut);
             if (mism == 0)
-                LOGGER.info("[CanvasGPU-WorldGen] VERIFY[{}] PASSED: {}/{} values bit-exact ({} bytes CL)", label, n, n, sb.length);
+                LOGGER.info("[CanvasGPU-WorldGen] comparison[{}]: {}/{} values match the CPU path ({} bytes CL)", label, n, n, sb.length);
             else
-                LOGGER.warn("[CanvasGPU-WorldGen] VERIFY[{}] FAILED: {}/{} mismatch maxULP={} first=({},{},{}) cpu={} gpu={}",
+                LOGGER.warn("[CanvasGPU-WorldGen] comparison[{}] failed: {}/{} mismatch maxULP={} first=({},{},{}) cpu={} gpu={}",
                     label, mism, n, (long) maxUlp, fx, fy, fz, fcpu, fgpu);
         } catch (Throwable t) {
             LOGGER.warn("[CanvasGPU-WorldGen] verify[{}] threw: {}", label, t.toString());
@@ -782,7 +782,7 @@ public final class GPUWorldGenContext {
     }
 
     /**
-     * End-to-end bit-exact gate: compares GPU surface heights against CPU df.compute() over a
+     * End-to-end CPU-matching gate: compares GPU surface heights against CPU df.compute() over a
      * random batch. Returns true only if EVERY sample matches. This validates the whole compiled
      * tree (noise + splines + DF ops + Y-scan) against vanilla. Never enable GPU if this fails.
      */
@@ -810,7 +810,7 @@ public final class GPUWorldGenContext {
             }
         }
         if (mismatches == 0) {
-            LOGGER.info("[CanvasGPU-WorldGen] BIT-EXACT VERIFY PASSED: {}/{} surface heights match CPU exactly", n, n);
+            LOGGER.info("[CanvasGPU-WorldGen] GPU-vs-CPU comparison: {}/{} surface heights match the CPU path", n, n);
             return true;
         }
         LOGGER.warn("[CanvasGPU-WorldGen] verify: {}/{} MISMATCH (maxDiff={}). first: ({},{}) cpu={} gpu={}",

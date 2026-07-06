@@ -6,7 +6,7 @@
 +/**
 + * Canvas GPU worldgen: a DensityFunction backed by a precomputed PER-BLOCK grid of the (unwrapped)
 + * finalDensity — the GPU has already done the trilinear interpolation of the cell corners
-+ * (bit-exact vs MC's NoiseInterpolator/Mth.lerp3, proven in gpu_verify/trilerp_match.c).
++ * (CPU-matching vs MC's NoiseInterpolator/Mth.lerp3, checked in gpu_verify/trilerp_match.c).
 + *
 + * Unlike {@link GpuGridDensity} (corner grid → wrapped in interpolated() → CPU NoiseInterpolator),
 + * this is used DIRECTLY as the density source: NoiseInterpolator is never created, so the ~18%-of-

@@ -5,7 +5,7 @@
 +
 +/**
 + * Canvas GPU worldgen: a DensityFunction backed by a precomputed cell-corner grid of the
-+ * (unwrapped) finalDensity, computed on the GPU bit-exactly (verified 8192/8192 vs CPU).
++ * (unwrapped) finalDensity, computed on the GPU identically to this fork's CPU path (checked 8192/8192 vs CPU).
 + *
 + * Correct-by-construction: NoiseChunk wraps this in an Interpolated marker → NoiseInterpolator
 + * samples it only at cell corners → returns the GPU grid values → MC's own trilinear

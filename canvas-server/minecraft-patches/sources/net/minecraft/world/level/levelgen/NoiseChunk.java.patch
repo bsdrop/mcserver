@@ -17,7 +17,7 @@
  
          List<NoiseChunk.BlockStateFiller> builder = new ArrayList<>();
 +        // Claude start - GPU full-chunk density (Task #6): compute finalDensity at cell corners on GPU
-+        // (bit-exact verified) and feed it into MC's own interpolation via interpolated(gpuGrid).
++        // (CPU-matching checked) and feed it into MC's own interpolation via interpolated(gpuGrid).
 +        // Correct-by-construction; off-grid + not-ready + GPU-busy all fall back to CPU.
 +        DensityFunction densitySource = wrappedRouter.finalDensity();
 +        double[] gpuGrid = io.canvasmc.canvas.gpu.worldgen.GPUSurfacePrecomputer.computeDensityGrid(
@@ -30,9 +30,9 @@
 +        // common case incl. all fresh worlds); blend-boundary chunks fall back to CPU. This cheap check
 +        // replaces the old 3-corner finalDensity gate (which cost 3 full tree-walks/chunk on CPU).
 +        if (gpuGrid != null && gpuGrid.length == expectedGrid && this.blender.isEmpty()) {
-+            // Value kernel was verified bit-exact (8192/8192) at context creation; cache is per-dimension
++            // Value kernel was checked CPU-matching (8192/8192) at context creation; cache is per-dimension
 +            // with matching grid size (length guard) — grid is trusted with NO per-chunk CPU re-compute.
-+            // Optional: let the GPU also do the trilinear interpolation (bit-exact vs NoiseInterpolator),
++            // Optional: let the GPU also do the trilinear interpolation (CPU-matching vs NoiseInterpolator),
 +            // feeding per-block density directly so MC's CPU interpolator is never created. null → corner path.
 +            double[] perBlock = io.canvasmc.canvas.gpu.worldgen.GPUSurfacePrecomputer.computeInterpolated(
 +                randomState, gpuGrid, this.cellWidth, this.cellHeight, cellCountXZ, this.cellCountY);
@@ -41,7 +41,7 @@
 +                int minBlockY = this.cellNoiseMinY * this.cellHeight;
 +                densitySource = new GpuPerBlockDensity(perBlock, chunkMinBlockX, chunkMinBlockZ, minBlockY, bX, bY, bZ, densitySource);
 +            } else {
-+                // Value kernel was verified bit-exact (8192/8192) at context creation; cache is per-dimension
++                // Value kernel was checked CPU-matching (8192/8192) at context creation; cache is per-dimension
 +                // with matching grid size (length guard) — grid is trusted with NO per-chunk CPU re-compute.
 +                GpuGridDensity gpu = new GpuGridDensity(gpuGrid, chunkMinBlockX, chunkMinBlockZ,
 +                    this.cellWidth, this.cellHeight, cellCountXZ + 1, cellCountXZ + 1, this.cellCountY + 1,

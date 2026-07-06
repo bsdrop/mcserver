@@ -24,8 +24,8 @@
          ChunkPos chunkPos = centerChunk.getPos();
          int chunkStartBlockX = chunkPos.getMinBlockX();
          int chunkStartBlockZ = chunkPos.getMinBlockZ();
-+        // Claude start - GPU surface precompute (bit-exact gated): precompute() triggers async
-+        // compile + CPU-vs-GPU bit-exact verification; only injects when verified AND enabled
++        // Claude start - GPU surface precompute (CPU-matching gated): precompute() triggers async
++        // compile + CPU-vs-GPU CPU-matching verification; only injects when checked AND enabled
 +        // (-Dcanvas.gpu.surface.enabled=true). Verify-only by default: logs PASS/FAIL, stays CPU.
 +        it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap gpuSurface =
 +            io.canvasmc.canvas.gpu.worldgen.GPUSurfacePrecomputer.precompute(

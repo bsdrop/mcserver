@@ -86,10 +86,10 @@ public final class GPUSurfacePrecomputer {
      *
      * Thread-safe. Non-blocking. Only for newly generated chunks (doFill path).
      */
-    // Default OFF: GPU surface only logs bit-exact verify result; generation stays pure CPU.
+    // Default OFF: GPU surface only logs CPU-matching verify result; generation stays pure CPU.
     // Flip to true (-Dcanvas.gpu.surface.enabled=true) only after verify PASSES in logs.
     public static final boolean SURFACE_ENABLED =
-        !"false".equalsIgnoreCase(System.getProperty("canvas.gpu.surface.enabled", "true")); // Claude - default ON (GPU-gated + verify-gated → CPU fallback if unavailable/not bit-exact)
+        !"false".equalsIgnoreCase(System.getProperty("canvas.gpu.surface.enabled", "true")); // Claude - default ON (GPU-gated + verify-gated → CPU fallback if unavailable/not CPU-matching)
 
     // Full-chunk GPU density (Task #6). Off by default — opt in with -Dcanvas.gpu.density.enabled=true.
     public static final boolean DENSITY_ENABLED =
@@ -199,11 +199,11 @@ public final class GPUSurfacePrecomputer {
     private static final AtomicLong gpuDensityChunks = new AtomicLong();
     private static final AtomicLong gpuDensityBatches = new AtomicLong();
 
-    /** Counts chunks whose density was generated on GPU (kernel pre-verified, no per-chunk gate). */
+    /** Counts chunks whose density was generated on GPU (kernel pre-checked, no per-chunk gate). */
     public static void reportDensityUsed(int gridPts) {
         if (reportedGatePass.compareAndSet(false, true))
             LOGGER.info("[CanvasGPU-Surface] GPU FULL-CHUNK DENSITY ACTIVE — {} corner pts/chunk, "
-                + "tile-aligned batch {}x{} ({} chunks/dispatch), kernel pre-verified (no per-chunk gate)",
+                + "tile-aligned batch {}x{} ({} chunks/dispatch), kernel pre-checked (no per-chunk gate)",
                 gridPts, DENSITY_TILE, DENSITY_TILE, DENSITY_TILE * DENSITY_TILE);
         long n = gpuDensityChunks.incrementAndGet();
         if (n % 256 == 0) {
@@ -225,7 +225,7 @@ public final class GPUSurfacePrecomputer {
     public static long gpuDensityChunkCount() { return gpuDensityChunks.get(); }
 
     public static Long2IntOpenHashMap precompute(RandomState state, int chunkX, int chunkZ) {
-        ContextEntry entry = getOrInitEntry(state); // triggers async compile + bit-exact verify (logs)
+        ContextEntry entry = getOrInitEntry(state); // triggers async compile + CPU-matching verify (logs)
 
         if (!SURFACE_ENABLED) return null; // verify-only mode: keep generation on CPU
 

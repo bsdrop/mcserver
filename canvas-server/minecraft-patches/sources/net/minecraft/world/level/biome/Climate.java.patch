@@ -29,7 +29,7 @@
  
              protected long distance(final long[] target) {
 +                // Claude start - primitive distance loop: no Parameter object deref / method call per dimension.
-+                // Bit-exact: Parameter.distance = above>0 ? above : max(below,0); Mth.square(d) = d*d.
++                // Matches the CPU path: Parameter.distance = above>0 ? above : max(below,0); Mth.square(d) = d*d.
 +                final long[] min = this.paramMin;
 +                final long[] max = this.paramMax;
                  long distance = 0L;

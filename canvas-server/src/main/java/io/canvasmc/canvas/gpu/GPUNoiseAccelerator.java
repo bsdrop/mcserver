@@ -151,7 +151,7 @@ public final class GPUNoiseAccelerator {
             }
             if (!allFinite) throw new RuntimeException("GPU startup test: non-finite results");
 
-            LOGGER.info("[CanvasGPU] Startup test PASSED — GPU computing finite noise values (N={}, batch_threshold={})", N, BATCH_THRESHOLD);
+            LOGGER.info("[CanvasGPU] Startup test: GPU produced finite noise values (N={}, batch_threshold={})", N, BATCH_THRESHOLD);
             LOGGER.info("[CanvasGPU] sample[0]={} sample[7]={}", String.format("%.6f", results[0]), String.format("%.6f", results[7]));
         } catch (Throwable t) {
             disableOnError("Startup test", t);

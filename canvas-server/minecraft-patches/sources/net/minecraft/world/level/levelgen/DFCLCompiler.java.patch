@@ -65,7 +65,7 @@
 +    /**
 +     * Compiles a DF into a kernel `compute_value` that outputs the raw double df(bx,blockY,bz)
 +     * for each (x,y,z) point (positions[id*3..+2] as ints). Used to verify arbitrary DFs
-+     * (e.g. finalDensity) bit-exact against CPU at full 3D points. Returns null on unsupported nodes.
++     * (e.g. finalDensity) CPU-matching against CPU at full 3D points. Returns null on unsupported nodes.
 +     */
 +    public static String compileValue(DensityFunction df) {
 +        try {
@@ -92,10 +92,10 @@
 +    // ─── Prologue ────────────────────────────────────────────────────────────────
 +
 +    private void emitPrologue() {
-+        // NOTE: bit-exact with Canvas ImprovedNoise.sampleAndLerp (FMA structure) — verified in
++        // NOTE: CPU-matching with Canvas ImprovedNoise.sampleAndLerp (FMA structure) — checked in
 +        // gpu_verify harness (200k pts, maxULP=0). Build MUST use -cl-fp32-correctly-rounded-divide-sqrt.
 +        src.append("""
-+            /* Canvas GPU Surface Precomputer — generated OpenCL C (fma bit-exact) */
++            /* Canvas GPU Surface Precomputer — generated OpenCL C (fma CPU-matching) */
 +            #pragma OPENCL EXTENSION cl_khr_fp64 : enable
 +            #pragma OPENCL FP_CONTRACT OFF
 +
@@ -110,7 +110,7 @@
 +            // PerlinNoise.wrap
 +            inline double mc_wrap(double x) { return x - (double)((long)floor(x/3.3554432e7+0.5))*3.3554432e7; }
 +
-+            // ImprovedNoise.noise (yScale=0): bit-exact FMA sampleAndLerp
++            // ImprovedNoise.noise (yScale=0): CPU-matching FMA sampleAndLerp
 +            double mc_perlin(__constant int* p, double _x, double _y, double _z,
 +                             double xo, double yo, double zo) {
 +                double x=_x+xo, y=_y+yo, z=_z+zo;
@@ -590,7 +590,7 @@
 +    }
 +
 +    // PerlinNoise.getValue: d += amp*g*vf over octaves, g=noise(wrap(c*factor)), exact order.
-+    // BlendedNoise.compute — base 3D terrain noise (verified bit-exact in gpu_verify/blended_match.c)
++    // BlendedNoise.compute — base 3D terrain noise (checked CPU-matching in gpu_verify/blended_match.c)
 +    private void emitBlendedNoise(String fn, BlendedNoise bn) {
 +        emitBlendedTables(fn + "_main", bn.canvas$mainNoise(), 8);
 +        emitBlendedTables(fn + "_min",  bn.canvas$minLimitNoise(), 16);
