@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Mon, 29 Jun 2026 23:04:49 +0000
-Subject: [PATCH] Canvas - aggressive dragon optimizations: no-op
+Subject: [PATCH] aggressive dragon optimizations: no-op
  applyEffectsFromBlocks, skip FLAP gameEvent, cache oldPos, throttle wing
  scan, minimal EnderDragonPart.tick
 

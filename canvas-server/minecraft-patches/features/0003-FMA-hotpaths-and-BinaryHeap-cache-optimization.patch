@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Mon, 29 Jun 2026 21:28:45 +0000
-Subject: [PATCH] Canvas - FMA hotpaths and BinaryHeap cache optimization
+Subject: [PATCH] FMA hotpaths and BinaryHeap cache optimization
 
 - ImprovedNoise: replace dot products + smoothstep + lerp chain with Math.fma()
   Reduces 3mul+2add to 2FMA+1mul per dot product; ARM NEON FMA is single insn
